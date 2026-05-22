@@ -1,0 +1,6 @@
+{
+  "name": "CifraDroid",
+  "description": "Digital Manuscript sheet music and chord reader with Bluetooth pedal support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CifraDroid</string>
+    <string name="library">Biblioteca</string>
+    <string name="setlists">Repertórios</string>
+    <string name="search">Buscar</string>
+    <string name="history">Histórico</string>
+    <string name="menu_desc">Menu</string>
+    <string name="pedal_config_desc">Configuração do Pedal</string>
+    <string name="settings_desc">Configurações</string>
+    <string name="add_manuscript_desc">Adicionar Partitura</string>
+    <string name="all_music">Todas as Músicas</string>
+    <string name="piano">Piano</string>
+    <string name="guitar">Violão/Guitarra</string>
+    <string name="jazz">Jazz</string>
+    <string name="classical">Clássica</string>
+    <string name="pedal_setup">Configurar Pedal</string>
+    <string name="back">Voltar</string>
+    <string name="bluetooth_status">Status do Bluetooth</string>
+    <string name="connected">Conectado: %1$s</string>
+    <string name="pedal_disconnected">Pedal Desconectado</string>
+    <string name="pedal_detected">M-VAVE Edge / Cube Turner detectado e configurado automaticamente</string>
+    <string name="check_bluetooth">Verifique o pareamento Bluetooth nas configurações do Android.</string>
+    <string name="key_mapping">Mapeamento de Teclas</string>
+    <string name="left_pedal">Pedal Esquerdo</string>
+    <string name="scroll_up">Rolagem Acima</string>
+    <string name="previous_page">Página Anterior</string>
+    <string name="right_pedal">Pedal Direito</string>
+    <string name="scroll_down">Rolagem Abaixo</string>
+    <string name="next_page">Próxima Página</string>
+    <string name="operation_mode">Modo de Operação</string>
+    <string name="portrait_mode">Retrato (Rolagem Vertical)</string>
+    <string name="landscape_mode">Paisagem (Páginas Horizontais)</string>
+    <string name="press_pedals_to_test">Aperte os pedais para testar...</string>
+    <string name="previous">Anterior</string>
+    <string name="next">Próxima</string>
+    <string name="page_desc">Página %1$d</string>
+    <string name="favorite_desc">Favorito</string>
+</resources>
