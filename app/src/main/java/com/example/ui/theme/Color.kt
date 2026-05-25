@@ -2,38 +2,44 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val md_theme_dark_primary = Color(0xFFFEFEFE)
-val md_theme_dark_onPrimary = Color(0xFF2F3131)
-val md_theme_dark_primaryContainer = Color(0xFFE1E1E1)
-val md_theme_dark_onPrimaryContainer = Color(0xFF626464)
-val md_theme_dark_secondary = Color(0xFFC6C6CB)
-val md_theme_dark_onSecondary = Color(0xFF2F3034)
-val md_theme_dark_secondaryContainer = Color(0xFF46464B)
-val md_theme_dark_onSecondaryContainer = Color(0xFFB5B4BA)
-val md_theme_dark_tertiary = Color(0xFFFFFDFF)
-val md_theme_dark_onTertiary = Color(0xFF303032)
-val md_theme_dark_tertiaryContainer = Color(0xFFE3E0E3)
-val md_theme_dark_onTertiaryContainer = Color(0xFF646365)
+val md_theme_dark_primary = Color(0xFFD4AF37) // Soft Gold
+val md_theme_dark_onPrimary = Color(0xFF1E1E1E)
+val md_theme_dark_primaryContainer = Color(0xFF332B13)
+val md_theme_dark_onPrimaryContainer = Color(0xFFFFE0B2)
+
+val md_theme_dark_secondary = Color(0xFFB0B0B0) // Graphite Light
+val md_theme_dark_onSecondary = Color(0xFF111111)
+val md_theme_dark_secondaryContainer = Color(0xFF2C2C2C)
+val md_theme_dark_onSecondaryContainer = Color(0xFFE0E0E0)
+
+val md_theme_dark_tertiary = Color(0xFFEAE5D9) // Warm White
+val md_theme_dark_onTertiary = Color(0xFF111111)
+val md_theme_dark_tertiaryContainer = Color(0xFF222222)
+val md_theme_dark_onTertiaryContainer = Color(0xFFDCDCDC)
+
 val md_theme_dark_error = Color(0xFFFFB4AB)
 val md_theme_dark_errorContainer = Color(0xFF93000A)
 val md_theme_dark_onError = Color(0xFF690005)
 val md_theme_dark_onErrorContainer = Color(0xFFFFDAD6)
-val md_theme_dark_background = Color(0xFF131313)
-val md_theme_dark_onBackground = Color(0xFFE5E2E1)
-val md_theme_dark_surface = Color(0xFF131313)
-val md_theme_dark_onSurface = Color(0xFFE5E2E1)
-val md_theme_dark_surfaceVariant = Color(0xFF353534)
-val md_theme_dark_onSurfaceVariant = Color(0xFFC4C7C8)
-val md_theme_dark_outline = Color(0xFF8E9192)
-val md_theme_dark_inverseOnSurface = Color(0xFF313030)
-val md_theme_dark_inverseSurface = Color(0xFFE5E2E1)
-val md_theme_dark_inversePrimary = Color(0xFF5D5F5F)
-val md_theme_dark_surfaceTint = Color(0xFFC6C6C6)
-val md_theme_dark_outlineVariant = Color(0xFF444748)
+
+val md_theme_dark_background = Color(0xFF111111) // Almost black
+val md_theme_dark_onBackground = Color(0xFFEAE5D9) // Warm White
+
+val md_theme_dark_surface = Color(0xFF18181A) // Graphite
+val md_theme_dark_onSurface = Color(0xFFEAE5D9)
+val md_theme_dark_surfaceVariant = Color(0xFF2A2A2A)
+val md_theme_dark_onSurfaceVariant = Color(0xFFCCCCCC)
+val md_theme_dark_outline = Color(0xFF606060)
+
+val md_theme_dark_inverseOnSurface = Color(0xFF1E1E1E)
+val md_theme_dark_inverseSurface = Color(0xFFEAE5D9)
+val md_theme_dark_inversePrimary = Color(0xFFD4AF37)
+val md_theme_dark_surfaceTint = Color(0xFFD4AF37)
+val md_theme_dark_outlineVariant = Color(0xFF404040)
 val md_theme_dark_scrim = Color(0xFF000000)
 
-val SurfaceContainerHighest = Color(0xFF353534)
+val SurfaceContainerHighest = Color(0xFF333333)
 val SurfaceContainerHigh = Color(0xFF2A2A2A)
-val SurfaceContainer = Color(0xFF201F1F)
-val SurfaceContainerLow = Color(0xFF1C1B1B)
-val SurfaceContainerLowest = Color(0xFF0E0E0E)
+val SurfaceContainer = Color(0xFF202020)
+val SurfaceContainerLow = Color(0xFF1A1A1A)
+val SurfaceContainerLowest = Color(0xFF0F0F0F)

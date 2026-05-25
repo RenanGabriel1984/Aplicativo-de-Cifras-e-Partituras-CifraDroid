@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -137,38 +138,76 @@ fun LibraryScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
+            ExtendedFloatingActionButton(
                 onClick = { 
                     documentPickerLauncher.launch(arrayOf("application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
                 },
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-            ) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_manuscript_desc))
-            }
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_manuscript_desc)) },
+                text = { Text("Importar Partitura") }
+            )
         }
     ) { paddingValues ->
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 140.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            items(
-                items = displayList,
-                key = { it.id }
-            ) { manuscript ->
-                ManuscriptCard(
-                    manuscript = manuscript,
-                    onClick = { onNavigateToReader(manuscript.id) }
-                )
+        val categories = listOf("Últimos Utilizados", "Favoritos", "Missas", "Ensaios", "Repertórios", "Entrada", "Comunhão", "Final")
+        var selectedCategory by remember { mutableStateOf(categories[0]) }
+
+        val filteredList = displayList.filter { selectedCategory == "Últimos Utilizados" || (selectedCategory == "Favoritos" && it.isFavorite) || (!it.isFavorite && selectedCategory != "Favoritos") }
+
+        if (displayList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(Icons.Default.LibraryMusic, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Sua biblioteca está vazia.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Importe uma partitura para começar.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Spacer(modifier = Modifier.height(80.dp))
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 140.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp)
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(categories) { category ->
+                            FilterChip(
+                                selected = selectedCategory == category,
+                                onClick = { selectedCategory = category },
+                                label = { Text(category) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
+                }
+                
+                if (filteredList.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 64.dp), contentAlignment = Alignment.Center) {
+                            Text("Nenhuma partitura nesta categoria.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    items(
+                        items = filteredList,
+                        key = { it.id }
+                    ) { manuscript ->
+                        ManuscriptCard(
+                            manuscript = manuscript,
+                            onClick = { onNavigateToReader(manuscript.id) }
+                        )
+                    }
+                }
             }
         }
     }

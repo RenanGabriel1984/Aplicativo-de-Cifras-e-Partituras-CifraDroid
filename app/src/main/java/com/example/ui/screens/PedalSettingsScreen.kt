@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,8 +26,7 @@ fun PedalSettingsScreen(
 ) {
     val isConnected by viewModel.pedalManager.isConnected.collectAsStateWithLifecycle()
     val deviceName by viewModel.pedalManager.deviceName.collectAsStateWithLifecycle()
-
-    var isPortraitMode by remember { mutableStateOf(true) }
+    val isVerticalScroll by viewModel.isVerticalScroll.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -72,14 +72,15 @@ fun PedalSettingsScreen(
                         tint = if (isConnected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Column {
+                        val finalDeviceName = if (deviceName.contains("M-VAVE") || deviceName.contains("Cube Turner")) deviceName else "M-VAVE / Cube Turner"
                         Text(
-                            text = if (isConnected) stringResource(R.string.connected, deviceName) else stringResource(R.string.pedal_disconnected),
+                            text = if (isConnected) stringResource(R.string.connected, finalDeviceName) else "M-VAVE / Cube Turner Desconectado",
                             style = MaterialTheme.typography.titleMedium,
                             color = if (isConnected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (isConnected) stringResource(R.string.pedal_detected) else stringResource(R.string.check_bluetooth),
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = if (isConnected) stringResource(R.string.pedal_detected) else "Conecte via Bluetooth nas configurações do Android. Os comandos HID (Setas, PageUp/Down) serão reconhecidos automaticamente.",
+                            style = MaterialTheme.typography.bodySmall,
                             color = if (isConnected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -94,14 +95,14 @@ fun PedalSettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(stringResource(R.string.left_pedal), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(if (isPortraitMode) stringResource(R.string.scroll_up) else stringResource(R.string.previous_page), style = MaterialTheme.typography.bodyLarge)
+                        Text(if (isVerticalScroll) stringResource(R.string.scroll_up) else stringResource(R.string.previous_page), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
                 OutlinedCard(modifier = Modifier.weight(1f)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(stringResource(R.string.right_pedal), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(if (isPortraitMode) stringResource(R.string.scroll_down) else stringResource(R.string.next_page), style = MaterialTheme.typography.bodyLarge)
+                        Text(if (isVerticalScroll) stringResource(R.string.scroll_down) else stringResource(R.string.next_page), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
@@ -111,26 +112,27 @@ fun PedalSettingsScreen(
             // Operation Mode Segments
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val modes = listOf(
-                    true to stringResource(R.string.portrait_mode),
-                    false to stringResource(R.string.landscape_mode)
+                    true to "Modo Portrait (Rolagem Vertical Contínua)",
+                    false to "Modo Landscape (Troca Horizontal de Páginas)"
                 )
-                modes.forEach { (isPortrait, modeName) ->
+                modes.forEach { (isVertical, modeName) ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
-                                if (isPortraitMode == isPortrait) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceContainer,
+                                if (isVerticalScroll == isVertical) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceContainer,
                                 RoundedCornerShape(8.dp)
                             )
+                            .clickable { viewModel.setVerticalScroll(isVertical) }
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
-                            selected = isPortraitMode == isPortrait,
-                            onClick = { isPortraitMode = isPortrait }
+                            selected = isVerticalScroll == isVertical,
+                            onClick = { viewModel.setVerticalScroll(isVertical) }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(modeName, style = MaterialTheme.typography.bodyLarge)
+                        Text(modeName, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }

@@ -38,20 +38,22 @@ class PdfRendererWrapper(val file: File) {
                 try {
                     // Try high-resolution rendering, fallback to lower if OOM occurs
                     var bitmap: Bitmap? = null
-                    val scaleMultipliers = listOf(2.0, 1.5, 1.0)
+                    val scaleMultipliers = listOf(1.5, 1.0, 0.5)
                     for (scale in scaleMultipliers) {
                         try {
                             bitmap = Bitmap.createBitmap(
-                                (page.width * scale).toInt(),
-                                (page.height * scale).toInt(),
-                                Bitmap.Config.ARGB_8888
+                                (page.width * scale).toInt().coerceAtLeast(1),
+                                (page.height * scale).toInt().coerceAtLeast(1),
+                                Bitmap.Config.RGB_565
                             )
                             break
                         } catch (e: OutOfMemoryError) {
                             // Try next lower scale
                         }
                     }
-                    if (bitmap == null) return@synchronized null // Cannot allocate even at lowest scale
+                    if (bitmap == null) {
+                        bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.RGB_565)
+                    }
 
                     val canvas = android.graphics.Canvas(bitmap)
                     canvas.drawColor(android.graphics.Color.WHITE)
@@ -62,7 +64,7 @@ class PdfRendererWrapper(val file: File) {
                 }
             } catch (t: Throwable) {
                 t.printStackTrace()
-                null
+                Bitmap.createBitmap(1, 1, Bitmap.Config.RGB_565)
             }
         }
     }
@@ -89,7 +91,8 @@ object DocumentReader {
             } else if (file.name.endsWith(".docx", ignoreCase = true) || file.name.endsWith(".doc", ignoreCase = true)) {
                 loadDocx(file) // we'll try treating doc as docx for now, or just extracting strings simply
             } else {
-                null
+                // Fallback to purely reading string
+                DocumentContent.TextDoc(file.readText())
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -117,7 +120,7 @@ object DocumentReader {
                             if (name == "w:t") {
                                 inText = true
                             } else if (name == "w:p") {
-                                sb.append("\n\n")
+                                sb.append("\n")
                             } else if (name == "w:tab") {
                                 sb.append("\t")
                             } else if (name == "w:br") {
@@ -149,7 +152,7 @@ object DocumentReader {
                     val buffer = ByteArray(2 * 1024 * 1024)
                     val bytesRead = stream.read(buffer)
                     if (bytesRead > 0) {
-                        String(buffer, 0, bytesRead, Charsets.US_ASCII).replace(Regex("[^\\x20-\\x7E\\r\\n]"), "")
+                        String(buffer, 0, bytesRead, Charsets.UTF_8).replace(Regex("[^\\p{L}\\p{N}\\p{P}\\p{Z}\\n\\r]"), "")
                     } else ""
                 }
             } catch (ex: Exception) { "" }

@@ -47,6 +47,20 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.res.stringResource
 import com.example.R
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import com.example.MainActivity
+
+fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
@@ -61,6 +75,23 @@ fun ReaderScreen(
     val context = LocalContext.current
     var localDocument by remember { mutableStateOf<com.example.util.DocumentContent?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        val window = context.findActivity()?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
 
     LaunchedEffect(manuscript?.localUri) {
         val uri = manuscript?.localUri
@@ -206,10 +237,17 @@ fun ReaderScreen(
                             )
                         } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
                             var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                            DisposableEffect(page) {
+                                onDispose {
+                                    val b = bitmap
+                                    bitmap = null
+                                    b?.recycle()
+                                }
+                            }
                             LaunchedEffect(page) {
                                 bitmap = (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.renderPage(page)
                             }
-                            if (bitmap != null) {
+                            if (bitmap != null && !bitmap!!.isRecycled) {
                                 androidx.compose.foundation.Image(
                                     bitmap = bitmap!!.asImageBitmap(),
                                     contentDescription = stringResource(R.string.page_desc, page + 1),
@@ -257,10 +295,17 @@ fun ReaderScreen(
                             )
                         } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
                             var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                            DisposableEffect(page) {
+                                onDispose {
+                                    val b = bitmap
+                                    bitmap = null
+                                    b?.recycle()
+                                }
+                            }
                             LaunchedEffect(page) {
                                 bitmap = (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.renderPage(page)
                             }
-                            if (bitmap != null) {
+                            if (bitmap != null && !bitmap!!.isRecycled) {
                                 androidx.compose.foundation.Image(
                                     bitmap = bitmap!!.asImageBitmap(),
                                     contentDescription = stringResource(R.string.page_desc, page + 1),
