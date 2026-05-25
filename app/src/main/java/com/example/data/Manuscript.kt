@@ -13,5 +13,6 @@ data class Manuscript(
     val isFavorite: Boolean = false,
     val lastUsedTimestamp: Long = 0L,
     val keySignature: String = "",
-    val era: String = ""
+    val era: String = "",
+    val localUri: String? = null
 )

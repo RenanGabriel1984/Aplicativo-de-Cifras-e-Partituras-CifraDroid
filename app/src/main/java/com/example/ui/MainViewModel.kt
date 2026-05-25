@@ -78,5 +78,15 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
         _isVerticalScroll.value = enabled
     }
 
+    fun importDocument(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch {
+            val manuscript = com.example.util.DocumentImporter.importDocument(context, uri)
+            if (manuscript != null) {
+                // Actually repository doesn't have insert, let me check ManuscriptDao
+                repository.insert(manuscript)
+            }
+        }
+    }
+
     fun getById(id: Int) = repository.getById(id)
 }

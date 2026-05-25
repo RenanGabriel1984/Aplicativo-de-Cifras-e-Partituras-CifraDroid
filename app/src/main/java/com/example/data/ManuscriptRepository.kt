@@ -14,6 +14,10 @@ class ManuscriptRepository(private val manuscriptDao: ManuscriptDao) {
         manuscriptDao.insertAll(initialData)
     }
 
+    suspend fun insert(manuscript: Manuscript) {
+        manuscriptDao.insertManuscript(manuscript)
+    }
+
     suspend fun toggleFavorite(manuscript: Manuscript) {
         manuscriptDao.updateManuscript(manuscript.copy(isFavorite = !manuscript.isFavorite))
     }

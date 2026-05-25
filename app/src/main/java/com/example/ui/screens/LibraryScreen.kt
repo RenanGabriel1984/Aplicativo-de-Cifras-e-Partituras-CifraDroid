@@ -51,6 +51,16 @@ fun LibraryScreen(
 
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
+    val documentPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                viewModel.importDocument(context, uri)
+                android.widget.Toast.makeText(context, "Documento importado com sucesso!", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
+
     androidx.activity.compose.BackHandler(enabled = isSearchActive) {
         focusManager.clearFocus()
         isSearchActive = false
@@ -129,7 +139,7 @@ fun LibraryScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { 
-                    android.widget.Toast.makeText(context, "Adicionar obra (Em desenvolvimento)", android.widget.Toast.LENGTH_SHORT).show()
+                    documentPickerLauncher.launch(arrayOf("application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
                 },
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer

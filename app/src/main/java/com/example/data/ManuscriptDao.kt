@@ -23,6 +23,9 @@ interface ManuscriptDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(manuscripts: List<Manuscript>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertManuscript(manuscript: Manuscript)
+
     @Update
     suspend fun updateManuscript(manuscript: Manuscript)
 
