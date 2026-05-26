@@ -25,20 +25,30 @@ class PdfReaderEngine(private val file: File) {
         }
     }
 
-    val pageCount: Int
-        get() = renderer?.pageCount ?: 0
-
-    init {
-        try {
-            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = pfd?.let { PdfRenderer(it) }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            close()
+    private fun ensureRendererOpen() {
+        if (pfd == null || renderer == null) {
+            try {
+                pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                renderer = pfd?.let { PdfRenderer(it) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
+    val pageCount: Int
+        get() {
+            ensureRendererOpen()
+            return renderer?.pageCount ?: 0
+        }
+
+    init {
+        ensureRendererOpen()
+    }
+
     suspend fun renderPage(pageIndex: Int, scale: Float = 1.5f): Bitmap? = withContext(Dispatchers.IO) {
+        ensureRendererOpen()
+        
         if (pageIndex < 0 || pageIndex >= pageCount) return@withContext null
         val r = renderer ?: return@withContext null
 

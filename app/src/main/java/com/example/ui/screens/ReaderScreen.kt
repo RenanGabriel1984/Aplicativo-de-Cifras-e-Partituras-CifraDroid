@@ -364,11 +364,37 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.Black
             )
+        } else if (localDocument is com.example.util.DocumentContent.HtmlDoc) {
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { context ->
+                    android.webkit.WebView(context).apply {
+                        settings.javaScriptEnabled = false
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    }
+                },
+                update = { webView ->
+                    webView.loadDataWithBaseURL(null, localDocument.html, "text/html", "utf-8", null)
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
             var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-            LaunchedEffect(page) {
-                bitmap = localDocument.engine.renderPage(page)
+            var hasError by remember { mutableStateOf(false) }
+            var retryKey by remember { mutableIntStateOf(0) }
+            
+            LaunchedEffect(page, retryKey) {
+                hasError = false
+                bitmap = null
+                val result = kotlinx.coroutines.withTimeoutOrNull(5000L) {
+                    localDocument.engine.renderPage(page)
+                }
+                if (result == null) {
+                    hasError = true
+                } else {
+                    bitmap = result
+                }
             }
+            
             if (bitmap != null) {
                 androidx.compose.foundation.Image(
                     bitmap = bitmap!!.asImageBitmap(),
@@ -376,6 +402,16 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (hasError) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Erro ao carregar renderização", color = Color.Red)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { retryKey++ }) {
+                            Text("Tentar Novamente")
+                        }
+                    }
+                }
             } else {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
