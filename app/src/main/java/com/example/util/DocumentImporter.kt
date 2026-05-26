@@ -33,14 +33,46 @@ object DocumentImporter {
                 }
             }
             
+            // Extract cover/thumbnail and optional text
+            var coverPath = ""
+            var textExtracted = ""
+            if (destinationFile.name.endsWith(".pdf", ignoreCase = true)) {
+                try {
+                    val pfd = android.os.ParcelFileDescriptor.open(destinationFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+                    val renderer = android.graphics.pdf.PdfRenderer(pfd)
+                    if (renderer.pageCount > 0) {
+                        val page = renderer.openPage(0)
+                        val bitmap = android.graphics.Bitmap.createBitmap((page.width * 0.5).toInt().coerceAtLeast(1), (page.height * 0.5).toInt().coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+                        val canvas = android.graphics.Canvas(bitmap)
+                        canvas.drawColor(android.graphics.Color.WHITE)
+                        page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        
+                        val coverFile = File(context.filesDir, "cover_${System.currentTimeMillis()}.png")
+                        FileOutputStream(coverFile).use { out ->
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        coverPath = coverFile.absolutePath
+                        page.close()
+                    }
+                    renderer.close()
+                    pfd.close()
+                } catch (e: Exception) { e.printStackTrace() }
+            } else {
+                // Try reading text fallback (already handled partially in DocumentReader, we'll just extract a chunk for indexing)
+                try {
+                    textExtracted = destinationFile.readText(Charsets.UTF_8).take(1000)
+                } catch(e:Exception){}
+            }
+            
             return@withContext Manuscript(
                 title = title,
-                composer = "Importado",
-                category = if (fileName.endsWith(".pdf", true)) "PDF" else "DOC",
-                coverUrl = "", // Empty indicates local file
+                composer = "Desconhecido",
+                category = "Entrada", // default fallback
+                coverUrl = coverPath,
                 localUri = destinationFile.absolutePath,
                 isFavorite = false,
-                lastUsedTimestamp = System.currentTimeMillis()
+                lastUsedTimestamp = System.currentTimeMillis(),
+                extractedText = textExtracted
             )
         } catch (e: Exception) {
             e.printStackTrace()

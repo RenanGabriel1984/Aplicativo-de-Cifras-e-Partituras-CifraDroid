@@ -14,5 +14,6 @@ data class Manuscript(
     val lastUsedTimestamp: Long = 0L,
     val keySignature: String = "",
     val era: String = "",
-    val localUri: String? = null
+    val localUri: String? = null,
+    val extractedText: String = ""
 )

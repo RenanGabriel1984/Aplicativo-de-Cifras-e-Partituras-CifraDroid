@@ -107,7 +107,7 @@ fun ReaderScreen(
     DisposableEffect(localDocument) {
         onDispose {
             if (localDocument is com.example.util.DocumentContent.PdfDoc) {
-                (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.close()
+                (localDocument as com.example.util.DocumentContent.PdfDoc).engine.close()
             }
         }
     }
@@ -115,7 +115,7 @@ fun ReaderScreen(
     val defaultPages = com.example.data.DataProvider.readerPages
     val pageCount = when (localDocument) {
         is com.example.util.DocumentContent.TextDoc -> 1
-        is com.example.util.DocumentContent.PdfDoc -> (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.pageCount
+        is com.example.util.DocumentContent.PdfDoc -> (localDocument as com.example.util.DocumentContent.PdfDoc).engine.pageCount
         else -> defaultPages.size
     }
     val pagerState = rememberPagerState(pageCount = { pageCount })
@@ -123,6 +123,7 @@ fun ReaderScreen(
     
     val focusRequester = remember { FocusRequester() }
     val toggleHud = { showHud = !showHud }
+    var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
     
     val pagerModifier = Modifier
         .fillMaxSize()
@@ -192,9 +193,13 @@ fun ReaderScreen(
                     when (keyEvent.key) {
                         Key.DirectionLeft, Key.PageUp, Key.DirectionUp -> {
                             if (keyEvent.type == KeyEventType.KeyUp) {
-                                coroutineScope.launch {
-                                    if (!pagerState.isScrollInProgress && pagerState.currentPage > 0) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                val now = System.currentTimeMillis()
+                                if (now - lastKeystrokeTime > 300) {
+                                    lastKeystrokeTime = now
+                                    coroutineScope.launch {
+                                        if (pagerState.currentPage > 0) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                        }
                                     }
                                 }
                             }
@@ -202,9 +207,13 @@ fun ReaderScreen(
                         }
                         Key.DirectionRight, Key.PageDown, Key.DirectionDown, Key.Spacebar, Key.Enter -> {
                             if (keyEvent.type == KeyEventType.KeyUp) {
-                                coroutineScope.launch {
-                                    if (!pagerState.isScrollInProgress && pagerState.currentPage < pageCount - 1) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                val now = System.currentTimeMillis()
+                                if (now - lastKeystrokeTime > 300) {
+                                    lastKeystrokeTime = now
+                                    coroutineScope.launch {
+                                        if (pagerState.currentPage < pageCount - 1) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                        }
                                     }
                                 }
                             }
@@ -218,118 +227,18 @@ fun ReaderScreen(
             if (isVerticalScroll) {
                 VerticalPager(
                     state = pagerState,
-                    modifier = pagerModifier
+                    modifier = pagerModifier,
+                    beyondViewportPageCount = 1
                 ) { page ->
-                    Box(modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFFFCFAF2))
-                    ) {
-                        if (localDocument is com.example.util.DocumentContent.TextDoc) {
-                            val scrollState = rememberScrollState()
-                            Text(
-                                text = (localDocument as com.example.util.DocumentContent.TextDoc).text,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp)
-                                    .verticalScroll(scrollState),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = Color.Black
-                            )
-                        } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
-                            var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-                            DisposableEffect(page) {
-                                onDispose {
-                                    val b = bitmap
-                                    bitmap = null
-                                    b?.recycle()
-                                }
-                            }
-                            LaunchedEffect(page) {
-                                bitmap = (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.renderPage(page)
-                            }
-                            if (bitmap != null && !bitmap!!.isRecycled) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = bitmap!!.asImageBitmap(),
-                                    contentDescription = stringResource(R.string.page_desc, page + 1),
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text("Carregando página...", color = Color.Gray)
-                                    }
-                                }
-                            }
-                        } else {
-                            AsyncImage(
-                                model = defaultPages.getOrNull(page),
-                                contentDescription = stringResource(R.string.page_desc, page + 1),
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
+                    PageContent(page, localDocument, defaultPages)
                 }
             } else {
                 HorizontalPager(
                     state = pagerState,
-                    modifier = pagerModifier
+                    modifier = pagerModifier,
+                    beyondViewportPageCount = 1
                 ) { page ->
-                    Box(modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFFFCFAF2))
-                    ) {
-                        if (localDocument is com.example.util.DocumentContent.TextDoc) {
-                            val scrollState = rememberScrollState()
-                            Text(
-                                text = (localDocument as com.example.util.DocumentContent.TextDoc).text,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp)
-                                    .verticalScroll(scrollState),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = Color.Black
-                            )
-                        } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
-                            var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-                            DisposableEffect(page) {
-                                onDispose {
-                                    val b = bitmap
-                                    bitmap = null
-                                    b?.recycle()
-                                }
-                            }
-                            LaunchedEffect(page) {
-                                bitmap = (localDocument as com.example.util.DocumentContent.PdfDoc).wrapper.renderPage(page)
-                            }
-                            if (bitmap != null && !bitmap!!.isRecycled) {
-                                androidx.compose.foundation.Image(
-                                    bitmap = bitmap!!.asImageBitmap(),
-                                    contentDescription = stringResource(R.string.page_desc, page + 1),
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text("Carregando página...", color = Color.Gray)
-                                    }
-                                }
-                            }
-                        } else {
-                            AsyncImage(
-                                model = defaultPages.getOrNull(page),
-                                contentDescription = stringResource(R.string.page_desc, page + 1),
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
+                    PageContent(page, localDocument, defaultPages)
                 }
             }
 
@@ -434,6 +343,55 @@ fun ReaderScreen(
         // Loading State
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, defaultPages: List<String>) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color(0xFFFCFAF2))
+    ) {
+        if (localDocument is com.example.util.DocumentContent.TextDoc) {
+            val scrollState = rememberScrollState()
+            Text(
+                text = localDocument.text,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .verticalScroll(scrollState),
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.Black
+            )
+        } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
+            var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+            LaunchedEffect(page) {
+                bitmap = localDocument.engine.renderPage(page)
+            }
+            if (bitmap != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = stringResource(R.string.page_desc, page + 1),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Carregando página...", color = Color.Gray)
+                    }
+                }
+            }
+        } else {
+            AsyncImage(
+                model = defaultPages.getOrNull(page),
+                contentDescription = stringResource(R.string.page_desc, page + 1),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }

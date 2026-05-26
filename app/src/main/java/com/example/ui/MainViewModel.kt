@@ -80,9 +80,8 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
 
     fun importDocument(context: android.content.Context, uri: android.net.Uri) {
         viewModelScope.launch {
-            val manuscript = com.example.util.DocumentImporter.importDocument(context, uri)
+            val manuscript = com.example.util.PdfImportManager.importFromUri(context, uri)
             if (manuscript != null) {
-                // Actually repository doesn't have insert, let me check ManuscriptDao
                 repository.insert(manuscript)
             }
         }

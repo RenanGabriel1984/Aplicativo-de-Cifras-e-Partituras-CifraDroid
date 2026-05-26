@@ -14,7 +14,7 @@ interface ManuscriptDao {
     @Query("SELECT * FROM manuscripts WHERE category = :category ORDER BY title ASC")
     fun getByCategory(category: String): Flow<List<Manuscript>>
     
-    @Query("SELECT * FROM manuscripts WHERE title LIKE '%' || :query || '%' OR composer LIKE '%' || :query || '%'")
+    @Query("SELECT * FROM manuscripts WHERE title LIKE '%' || :query || '%' OR composer LIKE '%' || :query || '%' OR extractedText LIKE '%' || :query || '%' OR category LIKE '%' || :query || '%'")
     fun searchManuscripts(query: String): Flow<List<Manuscript>>
 
     @Query("SELECT * FROM manuscripts WHERE id = :id LIMIT 1")
