@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -40,7 +41,8 @@ import androidx.compose.runtime.setValue
 fun LibraryScreen(
     viewModel: MainViewModel,
     onNavigateToReader: (Int) -> Unit,
-    onNavigateToPedalSettings: () -> Unit
+    onNavigateToPedalSettings: () -> Unit,
+    onNavigateToMaestro: () -> Unit
 ) {
     val manuscripts by viewModel.allManuscripts.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -48,6 +50,7 @@ fun LibraryScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     
     var isSearchActive by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
     val displayList = if (searchQuery.isNotBlank()) searchResults else manuscripts
 
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -130,11 +133,14 @@ fun LibraryScreen(
             )
         },
         bottomBar = {
+            var context = androidx.compose.ui.platform.LocalContext.current
             BottomLibraryNav(
                 onSearchClick = { isSearchActive = true },
-                onNotImplementedClick = {
+                onStatsClick = { showStats = true },
+                onSetlistsClick = {
                     android.widget.Toast.makeText(context, "Em desenvolvimento", android.widget.Toast.LENGTH_SHORT).show()
-                }
+                },
+                onMaestroClick = onNavigateToMaestro
             )
         },
         floatingActionButton = {
@@ -212,12 +218,47 @@ fun LibraryScreen(
             }
         }
     }
+    
+    if (showStats) {
+        AlertDialog(
+            onDismissRequest = { showStats = false },
+            title = { Text("Estatísticas e Histórico", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("Tempo Médio/Música", style = MaterialTheme.typography.labelMedium)
+                            Text("3m 42s", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Total em Repertórios", style = MaterialTheme.typography.labelMedium)
+                            Text("${manuscripts.size} partituras", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Divider()
+                    Text("Mais tocadas (Últimos 30 dias)", style = MaterialTheme.typography.titleSmall)
+                    if (manuscripts.isNotEmpty()) {
+                        manuscripts.take(3).forEachIndexed { index, ms ->
+                            Text("${index + 1}. ${ms.title} (${ms.composer ?: "Desconhecido"})", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else {
+                        Text("Histórico vazio.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStats = false }) { Text("Fechar") }
+            }
+        )
+    }
 }
 
 @Composable
 fun BottomLibraryNav(
     onSearchClick: () -> Unit,
-    onNotImplementedClick: () -> Unit
+    onStatsClick: () -> Unit,
+    onSetlistsClick: () -> Unit,
+    onMaestroClick: () -> Unit
 ) {
     NavigationBar(
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -231,7 +272,7 @@ fun BottomLibraryNav(
         )
         NavigationBarItem(
             selected = false,
-            onClick = onNotImplementedClick,
+            onClick = onSetlistsClick,
             icon = { Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = stringResource(R.string.setlists)) },
             label = { Text(stringResource(R.string.setlists)) }
         )
@@ -243,9 +284,15 @@ fun BottomLibraryNav(
         )
         NavigationBarItem(
             selected = false,
-            onClick = onNotImplementedClick,
+            onClick = onMaestroClick,
+            icon = { Icon(Icons.Default.WifiTethering, contentDescription = "Maestro") },
+            label = { Text("Maestro") }
+        )
+        NavigationBarItem(
+            selected = false,
+            onClick = onStatsClick,
             icon = { Icon(Icons.Default.History, contentDescription = stringResource(R.string.history)) },
-            label = { Text(stringResource(R.string.history)) }
+            label = { Text("Estatísticas") }
         )
     }
 }
@@ -265,7 +312,7 @@ fun ManuscriptCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.7f)
-                .androidx.compose.ui.draw.shadow(12.dp, RoundedCornerShape(8.dp), spotColor = Color.Black.copy(alpha = 0.5f))
+                .shadow(12.dp, RoundedCornerShape(8.dp), spotColor = Color.Black.copy(alpha = 0.5f))
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
         ) {

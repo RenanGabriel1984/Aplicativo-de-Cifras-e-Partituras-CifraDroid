@@ -6,6 +6,7 @@ import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -20,10 +21,17 @@ class PdfReaderEngine(private val file: File) {
     private val cacheSize = maxMemory / 4
     private val bitmapCache = object : LruCache<Int, Bitmap>(cacheSize) {
         override fun sizeOf(key: Int, bitmap: Bitmap): Int {
-            // The cache size will be measured in kilobytes rather than number of items.
             return bitmap.byteCount / 1024
         }
+        
+        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: Bitmap, newValue: Bitmap?) {
+            if (evicted) {
+                oldValue.recycle()
+            }
+        }
     }
+
+    private val mutex = kotlinx.coroutines.sync.Mutex()
 
     private fun ensureRendererOpen() {
         if (pfd == null || renderer == null) {
@@ -57,15 +65,15 @@ class PdfReaderEngine(private val file: File) {
             return@withContext cachedBitmap
         }
 
-        synchronized(r) {
-            if (!isActive) return@synchronized null
+        mutex.withLock {
+            if (!isActive) return@withLock null
             try {
                 val page = r.openPage(pageIndex)
                 try {
                     val width = (page.width * scale).roundToInt().coerceAtLeast(1)
                     val height = (page.height * scale).roundToInt().coerceAtLeast(1)
                     
-                    if (!isActive) return@synchronized null
+                    if (!isActive) return@withLock null
                     
                     var bitmap: Bitmap? = null
                     try {
@@ -75,11 +83,11 @@ class PdfReaderEngine(private val file: File) {
                             bitmapCache.evictAll()
                             bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
                         } catch (e2: OutOfMemoryError) {
-                            return@synchronized null
+                            return@withLock null
                         }
                     }
 
-                    if (bitmap == null || !isActive) return@synchronized null
+                    if (bitmap == null || !isActive) return@withLock null
 
                     val canvas = android.graphics.Canvas(bitmap)
                     canvas.drawColor(android.graphics.Color.WHITE)
@@ -87,17 +95,17 @@ class PdfReaderEngine(private val file: File) {
                     
                     if (isActive) {
                         bitmapCache.put(pageIndex, bitmap)
-                        return@synchronized bitmap
+                        return@withLock bitmap
                     } else {
                         bitmap.recycle()
-                        return@synchronized null
+                        return@withLock null
                     }
                 } finally {
                     page.close()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                return@synchronized null
+                return@withLock null
             }
         }
     }

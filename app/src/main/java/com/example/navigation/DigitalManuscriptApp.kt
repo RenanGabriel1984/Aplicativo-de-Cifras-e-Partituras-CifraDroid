@@ -1,5 +1,8 @@
 package com.example.navigation
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -8,12 +11,18 @@ import com.example.ui.MainViewModel
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.PedalSettingsScreen
 import com.example.ui.screens.ReaderScreen
+import com.example.ui.screens.MaestroScreen
 
 @Composable
 fun DigitalManuscriptApp(viewModel: MainViewModel) {
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "library") {
+    NavHost(
+        navController = navController, 
+        startDestination = "library",
+        enterTransition = { fadeIn(animationSpec = tween(500)) },
+        exitTransition = { fadeOut(animationSpec = tween(500)) }
+    ) {
         composable("library") {
             LibraryScreen(
                 viewModel = viewModel,
@@ -22,12 +31,20 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
                 },
                 onNavigateToPedalSettings = {
                     navController.navigate("pedal_settings")
+                },
+                onNavigateToMaestro = {
+                    navController.navigate("maestro")
                 }
             )
         }
         composable("pedal_settings") {
             PedalSettingsScreen(
                 viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("maestro") {
+            MaestroScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

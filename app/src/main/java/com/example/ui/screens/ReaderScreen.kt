@@ -19,7 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,8 +45,11 @@ import coil.request.ImageRequest
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.R
 
 import android.app.Activity
@@ -56,6 +59,14 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.MainActivity
+
+enum class LiturgicalTheme(val color: androidx.compose.ui.graphics.Color, val label: String) {
+    CLASSIC(androidx.compose.ui.graphics.Color.Transparent, "Clássico"),
+    ADVENT(androidx.compose.ui.graphics.Color(0xFF6A0DAD).copy(alpha = 0.05f), "Advento"),
+    LENT(androidx.compose.ui.graphics.Color(0xFF4B0082).copy(alpha = 0.05f), "Quaresma"),
+    EASTER(androidx.compose.ui.graphics.Color(0xFFFFD700).copy(alpha = 0.05f), "Páscoa"),
+    PENTECOST(androidx.compose.ui.graphics.Color(0xFFFF0000).copy(alpha = 0.05f), "Pentecostes")
+}
 
 fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -80,6 +91,7 @@ fun ReaderScreen(
     var isStageMode by remember { mutableStateOf(false) }
     var isChoirMode by remember { mutableStateOf(false) }
     var autoScrollSpeed by remember { mutableFloatStateOf(0f) }
+    var liturgicalTheme by remember { mutableStateOf(LiturgicalTheme.CLASSIC) }
     
     val currentRole by com.example.util.SessionManager.currentRole.collectAsStateWithLifecycle()
     val syncEvent by com.example.util.SessionManager.syncEvents.collectAsStateWithLifecycle()
@@ -126,16 +138,23 @@ fun ReaderScreen(
 
     val defaultPages = com.example.data.DataProvider.readerPages
     val pageCount = when (localDocument) {
-        is com.example.util.DocumentContent.TextDoc -> 1
         is com.example.util.DocumentContent.PdfDoc -> (localDocument as com.example.util.DocumentContent.PdfDoc).engine.pageCount
         else -> defaultPages.size
     }
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val coroutineScope = rememberCoroutineScope()
     
+    val view = androidx.compose.ui.platform.LocalView.current
+
     val attemptNextPageOrNextSong = {
+        view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
         if (pagerState.currentPage < pageCount - 1) {
-            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+            coroutineScope.launch { 
+                pagerState.animateScrollToPage(
+                    pagerState.currentPage + 1,
+                    animationSpec = androidx.compose.animation.core.tween(500, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                ) 
+            }
         } else if (repertoire != null) {
             try {
                 val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
@@ -149,8 +168,14 @@ fun ReaderScreen(
     }
     
     val attemptPrevPageOrPrevSong = {
+        view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
         if (pagerState.currentPage > 0) {
-            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+            coroutineScope.launch { 
+                pagerState.animateScrollToPage(
+                    pagerState.currentPage - 1,
+                    animationSpec = androidx.compose.animation.core.tween(500, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                ) 
+            }
         } else if (repertoire != null) {
             try {
                 val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
@@ -194,6 +219,14 @@ fun ReaderScreen(
     val focusRequester = remember { FocusRequester() }
     val toggleHud = { showHud = !showHud }
     var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
+    
+    // Auto-hide HUD natively
+    LaunchedEffect(showHud, pagerState.currentPage) {
+        if (showHud) {
+            kotlinx.coroutines.delay(4000)
+            showHud = false
+        }
+    }
     
     val pagerModifier = Modifier
         .fillMaxSize()
@@ -302,6 +335,10 @@ fun ReaderScreen(
                     PageContent(page, localDocument, defaultPages, isChoirMode)
                 }
             }
+            
+            if (liturgicalTheme != LiturgicalTheme.CLASSIC) {
+                Box(modifier = Modifier.fillMaxSize().background(liturgicalTheme.color))
+            }
 
             // HUD
             AnimatedVisibility(
@@ -327,11 +364,13 @@ fun ReaderScreen(
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back), tint = MaterialTheme.colorScheme.primary)
                             }
                             
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = repertoire?.name ?: currentManuscript.title,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = if (repertoire != null) {
@@ -346,11 +385,11 @@ fun ReaderScreen(
                                         currentManuscript.composer
                                     },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 
-                                var showMaestroPanel by remember { mutableStateOf(false) }
-
                                 val networkStatus by com.example.util.SessionNetworkManager.connectionStatus.collectAsStateWithLifecycle()
                                 val serverIpAndPort by com.example.util.SessionNetworkManager.serverIpAndPort.collectAsStateWithLifecycle()
                                 val clientsCount by com.example.util.SessionNetworkManager.connectedClientsCount.collectAsStateWithLifecycle()
@@ -365,7 +404,7 @@ fun ReaderScreen(
                                     Surface(
                                         color = MaterialTheme.colorScheme.surfaceVariant,
                                         shape = RoundedCornerShape(16.dp),
-                                        modifier = Modifier.padding(top = 4.dp).clickable { showMaestroPanel = true }
+                                        modifier = Modifier.padding(top = 4.dp)
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                                             Text(statusDot, modifier = Modifier.padding(end = 6.dp), style = MaterialTheme.typography.labelSmall)
@@ -377,47 +416,16 @@ fun ReaderScreen(
                                         }
                                     }
                                 }
-
-                                if (showMaestroPanel) {
-                                    AlertDialog(
-                                        onDismissRequest = { showMaestroPanel = false },
-                                        title = { Text("Painel Maestro", style = MaterialTheme.typography.titleMedium) },
-                                        text = {
-                                            Column {
-                                                Text("Status: $networkStatus")
-                                                if (serverIpAndPort != null) Text("IP Sessão: $serverIpAndPort")
-                                                Text("Músicos Conectados: $clientsCount", modifier = Modifier.padding(top = 8.dp))
-                                                
-                                                if (currentRole == com.example.util.SessionRole.LEADER) {
-                                                    var currentNote by remember { mutableStateOf("") }
-                                                    OutlinedTextField(
-                                                        value = currentNote,
-                                                        onValueChange = { currentNote = it },
-                                                        label = { Text("Nota para integrantes (Ex: Tom G, Capo 2)") },
-                                                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                                                        trailingIcon = {
-                                                            IconButton(onClick = {
-                                                                com.example.util.SessionManager.broadcastPageChange(manuscriptId, pagerState.currentPage, currentNote)
-                                                            }) { Icon(Icons.Default.Send, contentDescription = "Enviar") }
-                                                        }
-                                                    )
-                                                }
-                                                
-                                                if (syncEvent?.note != null) {
-                                                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(top = 16.dp).fillMaxWidth()) {
-                                                        Text("Aviso Maestro: ${syncEvent!!.note}", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        confirmButton = {
-                                            TextButton(onClick = { showMaestroPanel = false }) { Text("Fechar") }
-                                        }
-                                    )
+                                
+                                if (syncEvent?.note != null && currentRole == com.example.util.SessionRole.FOLLOWER) {
+                                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(top = 16.dp).fillMaxWidth()) {
+                                        Text("Aviso Maestro: ${syncEvent!!.note}", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
                                 }
                             }
                             
                             var showMenu by remember { mutableStateOf(false) }
+                            
                             Box {
                                 IconButton(onClick = { showMenu = true }) {
                                     Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_desc), tint = MaterialTheme.colorScheme.primary)
@@ -450,47 +458,14 @@ fun ReaderScreen(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Ser Maestro (Leader)") },
+                                        text = { Text("Tema Litúrgico: ${liturgicalTheme.label}") },
                                         onClick = {
-                                            com.example.util.SessionNetworkManager.startServer()
-                                            showMenu = false
+                                            val values = LiturgicalTheme.values()
+                                            liturgicalTheme = values[(liturgicalTheme.ordinal + 1) % values.size]
                                         }
                                     )
-                                    var showFollowerDialog by remember { mutableStateOf(false) }
                                     DropdownMenuItem(
-                                        text = { Text("Seguir Maestro") },
-                                        onClick = {
-                                            showFollowerDialog = true
-                                            showMenu = false
-                                        }
-                                    )
-                                    if (showFollowerDialog) {
-                                        var ipInput by remember { mutableStateOf("") }
-                                        AlertDialog(
-                                            onDismissRequest = { showFollowerDialog = false },
-                                            title = { Text("Conectar ao Maestro", style = MaterialTheme.typography.titleMedium) },
-                                            text = {
-                                                OutlinedTextField(
-                                                    value = ipInput,
-                                                    onValueChange = { ipInput = it },
-                                                    label = { Text("IP:Porta (ex: 192.168.1.10:8080)") },
-                                                    singleLine = true,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            },
-                                            confirmButton = {
-                                                TextButton(onClick = {
-                                                    com.example.util.SessionNetworkManager.connectAsFollower(ipInput)
-                                                    showFollowerDialog = false
-                                                }) { Text("Conectar") }
-                                            },
-                                            dismissButton = {
-                                                TextButton(onClick = { showFollowerDialog = false }) { Text("Cancelar") }
-                                            }
-                                        )
-                                    }
-                                    DropdownMenuItem(
-                                        text = { Text("Modo Individual") },
+                                        text = { Text("Desconectar Sessão") },
                                         onClick = {
                                             com.example.util.SessionNetworkManager.stopAll()
                                             showMenu = false
@@ -557,38 +532,38 @@ fun ReaderScreen(
 
 @Composable
 fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, defaultPages: List<String>, isChoirMode: Boolean = false) {
-    val bgColor = if (localDocument is com.example.util.DocumentContent.TextDoc || localDocument is com.example.util.DocumentContent.HtmlDoc) Color(0xFFFCFAF2) else Color.Transparent
-    Box(modifier = Modifier
-        .fillMaxSize()
-        .background(bgColor)
-    ) {
-        if (localDocument is com.example.util.DocumentContent.TextDoc) {
-            val scrollState = rememberScrollState()
-            Text(
-                text = localDocument.text,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-                    .verticalScroll(scrollState),
-                style = if (isChoirMode) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.bodyLarge,
-                color = Color.Black
+    val scrollState = androidx.compose.foundation.rememberScrollState()
+    
+    // Smart Reading Mode: dynamic scale based on scroll offset without recomposing
+    val animatedViewportScale = remember { androidx.compose.animation.core.Animatable(1f) }
+    
+    LaunchedEffect(scrollState) {
+        androidx.compose.runtime.snapshotFlow {
+            if (scrollState.maxValue <= 0) return@snapshotFlow 1f
+            val value = scrollState.value.toFloat()
+            val max = scrollState.maxValue.toFloat()
+            
+            val threshold = max * 0.1f
+            if (threshold <= 0) return@snapshotFlow 1f
+            
+            when {
+                value < threshold -> 1f + (0.15f * (1f - (value / threshold)))
+                value > max - threshold -> 1f + (0.15f * ((value - (max - threshold)) / threshold))
+                else -> 1f
+            }
+        }.collect { targetScale ->
+            animatedViewportScale.animateTo(
+                targetValue = targetScale,
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                    stiffness = androidx.compose.animation.core.Spring.StiffnessLow
+                )
             )
-        } else if (localDocument is com.example.util.DocumentContent.HtmlDoc) {
-            androidx.compose.ui.viewinterop.AndroidView(
-                factory = { context ->
-                    android.webkit.WebView(context).apply {
-                        settings.javaScriptEnabled = false
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    }
-                },
-                update = { webView ->
-                    val extraScale = if (isChoirMode) "body { font-size: 150% !important; }" else ""
-                    val modifiedHtml = localDocument.html.replace("</style>", "$extraScale</style>")
-                    webView.loadDataWithBaseURL(null, modifiedHtml, "text/html", "utf-8", null)
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        } else if (localDocument is com.example.util.DocumentContent.PdfDoc) {
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Transparent).verticalScroll(scrollState)) {
+        if (localDocument is com.example.util.DocumentContent.PdfDoc) {
             var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
             var hasError by remember { mutableStateOf(false) }
             var retryKey by remember { mutableIntStateOf(0) }
@@ -597,7 +572,7 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                 hasError = false
                 bitmap = null
                 val result = kotlinx.coroutines.withTimeoutOrNull(5000L) {
-                    localDocument.engine.renderPage(page)
+                    localDocument.engine.renderPage(page, scale = 1.5f)
                 }
                 if (result == null) {
                     hasError = true
@@ -607,12 +582,38 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
             }
             
             if (bitmap != null) {
-                androidx.compose.foundation.Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = stringResource(R.string.page_desc, page + 1),
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().padding(16.dp).shadow(12.dp)
-                )
+                var scale by remember { mutableFloatStateOf(1f) }
+                var offsetX by remember { mutableStateOf(0f) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 3f)
+                                val maxX = ((size.width * scale - size.width) / 2).coerceAtLeast(0f)
+                                if (scale > 1f) {
+                                    offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                } else {
+                                    offsetX = 0f
+                                }
+                            }
+                        }
+                ) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = stringResource(R.string.page_desc, page + 1),
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                val totalScale = scale * animatedViewportScale.value
+                                scaleX = totalScale
+                                scaleY = totalScale
+                                translationX = offsetX
+                            }
+                    )
+                }
             } else if (hasError) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -636,8 +637,8 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
             AsyncImage(
                 model = defaultPages.getOrNull(page),
                 contentDescription = stringResource(R.string.page_desc, page + 1),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

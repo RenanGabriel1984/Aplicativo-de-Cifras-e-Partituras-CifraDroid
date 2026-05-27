@@ -7,12 +7,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import org.json.JSONObject
 
 object SessionNetworkManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    
+    private var serverJob: Job? = null
+    private var clientJob: Job? = null
+    private var discoveryJob: Job? = null
     
     // Server state
     private var serverSocket: ServerSocket? = null
@@ -30,6 +37,9 @@ object SessionNetworkManager {
     
     private val _serverIpAndPort = MutableStateFlow<String?>(null)
     val serverIpAndPort = _serverIpAndPort.asStateFlow()
+    
+    private val _sessionPin = MutableStateFlow<String>("")
+    val sessionPin = _sessionPin.asStateFlow()
 
     fun getLocalIpAddress(): String {
         return try {
@@ -48,15 +58,42 @@ object SessionNetworkManager {
         }
     }
 
+    private fun startDiscoveryBroadcast(pin: String, ip: String, port: Int) {
+        discoveryJob?.cancel()
+        discoveryJob = scope.launch(Dispatchers.IO) {
+            try {
+                val socket = DatagramSocket()
+                socket.broadcast = true
+                val message = "MAESTRO_DISCOVERY|$pin|$ip:$port"
+                val buffer = message.toByteArray()
+                val address = InetAddress.getByName("255.255.255.255")
+                while (isActive) {
+                    val packet = DatagramPacket(buffer, buffer.size, address, 8081)
+                    socket.send(packet)
+                    delay(2000)
+                }
+                socket.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     fun startServer(port: Int = 8080) {
         stopAll()
         SessionManager.setRole(SessionRole.LEADER)
-        scope.launch {
+        val pin = (1000..9999).random().toString()
+        _sessionPin.value = pin
+        
+        serverJob = scope.launch {
             try {
                 serverSocket = ServerSocket(port)
                 val ip = getLocalIpAddress()
-                _serverIpAndPort.value = if(ip.isNotEmpty()) "$ip:$port" else "127.0.0.1:$port"
-                _connectionStatus.value = "Sessão Aberta (Maestro)"
+                val addr = if(ip.isNotEmpty()) "$ip:$port" else "127.0.0.1:$port"
+                _serverIpAndPort.value = addr
+                _connectionStatus.value = "Sessão Aberta (PIN: $pin)"
+                
+                if (ip.isNotEmpty()) startDiscoveryBroadcast(pin, ip, port)
                 
                 while (isActive) {
                     val client = serverSocket?.accept() ?: break
@@ -66,7 +103,6 @@ object SessionNetworkManager {
                         _connectedClientsCount.value = clients.size
                     }
                     
-                    // Emite o estado atual imediatamente pro novo cliente
                     val currentEvent = SessionManager.syncEvents.value
                     if (currentEvent != null) {
                         val json = JSONObject().apply {
@@ -91,18 +127,49 @@ object SessionNetworkManager {
         }
     }
 
-    fun connectAsFollower(ipString: String) {
+    fun connectViaPin(pin: String) {
         stopAll()
         SessionManager.setRole(SessionRole.FOLLOWER)
+        clientJob = scope.launch(Dispatchers.IO) {
+            _connectionStatus.value = "Buscando Maestro (PIN $pin)..."
+            var targetIp: String? = null
+            
+            try {
+                val socket = DatagramSocket(8081)
+                socket.soTimeout = 10000 // 10 seconds timeout to find
+                val buffer = ByteArray(256)
+                while (isActive && targetIp == null) {
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
+                    val received = String(packet.data, 0, packet.length)
+                    if (received.startsWith("MAESTRO_DISCOVERY|$pin|")) {
+                        targetIp = received.split("|")[2]
+                    }
+                }
+                socket.close()
+            } catch (e: Exception) {
+                _connectionStatus.value = "Sessão não encontrada."
+                SessionManager.setRole(SessionRole.STANDALONE)
+                return@launch
+            }
+            
+            if (targetIp != null) {
+                connectToDirectIp(targetIp)
+            }
+        }
+    }
+
+    fun connectToDirectIp(ipString: String) {
+        // ... (called internally by connectViaPin)
         val parts = ipString.split(":")
         val ip = parts.getOrNull(0) ?: return
         val port = parts.getOrNull(1)?.toIntOrNull() ?: 8080
         
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             var failCount = 0
             while (isActive && SessionManager.currentRole.value == SessionRole.FOLLOWER) {
                 try {
-                    _connectionStatus.value = "Conectando a $ip..."
+                    _connectionStatus.value = "Conectando a Maestro..."
                     clientSocket = Socket()
                     clientSocket!!.connect(java.net.InetSocketAddress(ip, port), 5000)
                     val reader = BufferedReader(InputStreamReader(clientSocket!!.getInputStream()))
@@ -118,7 +185,6 @@ object SessionNetworkManager {
                             val ts = json.optLong("timestamp", 0L)
                             val note = if (json.has("note")) json.optString("note") else null
                             if (mId != -1) {
-                                // Add small debounce to avoid bounce issues
                                 SessionManager.onReceivedSyncEvent(SyncEvent(mId, pIndex, ts, note))
                             }
                         } catch (e: Exception) {
@@ -133,9 +199,8 @@ object SessionNetworkManager {
                     
                     if (SessionManager.currentRole.value == SessionRole.FOLLOWER) {
                         _connectionStatus.value = "Reconectando..."
-                        delay(2500) // Delay before reconnect attempt
+                        delay(2500)
                         failCount++
-                        // Silent infinity reconnect basically
                     }
                 }
             }
@@ -175,6 +240,9 @@ object SessionNetworkManager {
     }
     
     fun stopAll() {
+        serverJob?.cancel()
+        clientJob?.cancel()
+        discoveryJob?.cancel()
         try { serverSocket?.close() } catch(e: Exception){}
         serverSocket = null
         try { clientSocket?.close() } catch(e: Exception){}
@@ -186,7 +254,9 @@ object SessionNetworkManager {
             _connectedClientsCount.value = 0
         }
         _serverIpAndPort.value = null
+        _sessionPin.value = ""
         _connectionStatus.value = "Desconectado"
         SessionManager.setRole(SessionRole.STANDALONE)
     }
 }
+

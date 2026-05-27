@@ -105,7 +105,7 @@ object PdfImportManager {
                 FileOutputStream(coverFile).use { out ->
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
-                coverPath = coverFile.absolutePath
+                coverPath = "file://${coverFile.absolutePath}"
                 page.close()
             }
             renderer.close()
