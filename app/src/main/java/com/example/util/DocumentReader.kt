@@ -26,6 +26,7 @@ object DocumentReader {
             if (file.name.endsWith(".pdf", ignoreCase = true)) {
                 DocumentContent.PdfDoc(PdfReaderEngine(file))
             } else if (file.name.endsWith(".docx", ignoreCase = true) || file.name.endsWith(".doc", ignoreCase = true)) {
+                // If the user already had a DOCX file imported before the PDF conversion step was added
                 val html = DocxToHtmlConverter.convertToHtml(file)
                 DocumentContent.HtmlDoc(html)
             } else {

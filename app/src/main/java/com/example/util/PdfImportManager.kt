@@ -61,12 +61,20 @@ object PdfImportManager {
         }
     }
 
-    private fun persistPdf(context: Context, uri: Uri, fileName: String): File? {
+        private fun persistPdf(context: Context, uri: Uri, fileName: String): File? {
         return try {
+            val extension = fileName.substringAfterLast(".", "pdf")
             val destinationFile = File(context.filesDir, "doc_${System.currentTimeMillis()}_$fileName")
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(destinationFile).use { output ->
                     input.copyTo(output)
+                }
+            }
+            if (extension.equals("docx", ignoreCase = true) || extension.equals("doc", ignoreCase = true)) {
+                val pdfFile = DocxToPdfConverter.convertToPdf(context, destinationFile)
+                if (pdfFile != null) {
+                    destinationFile.delete() // remove docx
+                    return pdfFile
                 }
             }
             destinationFile

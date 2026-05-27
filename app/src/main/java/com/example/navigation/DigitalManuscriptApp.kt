@@ -31,13 +31,29 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
                 onNavigateBack = { navController.popBackStack() }
             )
         }
-        composable("reader/{id}") { backStackEntry ->
-            val id = backStackEntry.arguments?.getString("id")?.toIntOrNull() ?: return@composable
+        composable(
+            "reader/{id}?repertoireId={repertoireId}",
+            arguments = listOf(
+                androidx.navigation.navArgument("id") { type = androidx.navigation.NavType.IntType },
+                androidx.navigation.navArgument("repertoireId") { 
+                    type = androidx.navigation.NavType.IntType
+                    defaultValue = -1 
+                }
+            )
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getInt("id") ?: return@composable
+            val repId = backStackEntry.arguments?.getInt("repertoireId") ?: -1
             ReaderScreen(
                 viewModel = viewModel,
                 manuscriptId = id,
+                repertoireId = if (repId != -1) repId else null,
                 onNavigateBack = {
                     navController.popBackStack()
+                },
+                onNavigateToManuscript = { nextId ->
+                    navController.navigate("reader/$nextId?repertoireId=$repId") {
+                        popUpTo("library") // avoid giant backstacks
+                    }
                 }
             )
         }

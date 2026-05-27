@@ -19,10 +19,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -66,11 +68,21 @@ fun Context.findActivity(): Activity? = when (this) {
 fun ReaderScreen(
     viewModel: MainViewModel,
     manuscriptId: Int,
-    onNavigateBack: () -> Unit
+    repertoireId: Int? = null,
+    onNavigateBack: () -> Unit,
+    onNavigateToManuscript: (Int) -> Unit = {}
 ) {
     val manuscript by viewModel.getById(manuscriptId).collectAsStateWithLifecycle(initialValue = null)
+    val repertoire by if (repertoireId != null) viewModel.getRepertoire(repertoireId).collectAsStateWithLifecycle(initialValue = null) else remember { mutableStateOf(null) }
+    
     val isVerticalScroll by viewModel.isVerticalScroll.collectAsStateWithLifecycle()
     var showHud by remember { mutableStateOf(false) }
+    var isStageMode by remember { mutableStateOf(false) }
+    var isChoirMode by remember { mutableStateOf(false) }
+    var autoScrollSpeed by remember { mutableFloatStateOf(0f) }
+    
+    val currentRole by com.example.util.SessionManager.currentRole.collectAsStateWithLifecycle()
+    val syncEvent by com.example.util.SessionManager.syncEvents.collectAsStateWithLifecycle()
     
     val context = LocalContext.current
     var localDocument by remember { mutableStateOf<com.example.util.DocumentContent?>(null) }
@@ -121,27 +133,83 @@ fun ReaderScreen(
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val coroutineScope = rememberCoroutineScope()
     
+    val attemptNextPageOrNextSong = {
+        if (pagerState.currentPage < pageCount - 1) {
+            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+        } else if (repertoire != null) {
+            try {
+                val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
+                val ids = List(arr.length()) { i -> arr.getInt(i) }
+                val currentIndex = ids.indexOf(manuscriptId)
+                if (currentIndex in 0 until ids.size - 1) {
+                    onNavigateToManuscript(ids[currentIndex + 1])
+                }
+            } catch (e: Exception) { }
+        }
+    }
+    
+    val attemptPrevPageOrPrevSong = {
+        if (pagerState.currentPage > 0) {
+            coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+        } else if (repertoire != null) {
+            try {
+                val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
+                val ids = List(arr.length()) { i -> arr.getInt(i) }
+                val currentIndex = ids.indexOf(manuscriptId)
+                if (currentIndex > 0) {
+                    onNavigateToManuscript(ids[currentIndex - 1])
+                }
+            } catch (e: Exception) { }
+        }
+    }
+    
+    // Auto-scroll loop
+    LaunchedEffect(autoScrollSpeed) {
+        if (autoScrollSpeed > 0f) {
+            while (true) {
+                kotlinx.coroutines.delay((5000 / autoScrollSpeed).toLong().coerceAtLeast(500L))
+                attemptNextPageOrNextSong()
+            }
+        }
+    }
+
+    // Follower sync
+    LaunchedEffect(syncEvent, currentRole) {
+        if (currentRole == com.example.util.SessionRole.FOLLOWER && syncEvent != null) {
+            if (syncEvent!!.manuscriptId == manuscriptId && syncEvent!!.pageIndex != pagerState.currentPage) {
+                pagerState.animateScrollToPage(syncEvent!!.pageIndex)
+            } else if (syncEvent!!.manuscriptId != manuscriptId) {
+                onNavigateToManuscript(syncEvent!!.manuscriptId)
+            }
+        }
+    }
+    
+    // Leader broadcast
+    LaunchedEffect(pagerState.currentPage) {
+        if (currentRole == com.example.util.SessionRole.LEADER) {
+            com.example.util.SessionManager.broadcastPageChange(manuscriptId, pagerState.currentPage)
+        }
+    }
+
     val focusRequester = remember { FocusRequester() }
     val toggleHud = { showHud = !showHud }
     var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
     
     val pagerModifier = Modifier
         .fillMaxSize()
-        .pointerInput(Unit) {
+        .pointerInput(isStageMode) {
             detectTapGestures(
                 onTap = { offset ->
-                    val width = size.width
-                    val x = offset.x
-                    // 1f, 1.5f, 1f hit zones mapped to width
-                    val leftBoundary = width * (1f / 3.5f)
-                    val rightBoundary = width * (2.5f / 3.5f)
-                    if (x < leftBoundary) {
-                        coroutineScope.launch {
-                            if (pagerState.currentPage > 0) pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                        }
-                    } else if (x > rightBoundary) {
-                        coroutineScope.launch {
-                            if (pagerState.currentPage < pageCount - 1) pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                    if (!isStageMode) {
+                        val width = size.width
+                        val x = offset.x
+                        // 1f, 1.5f, 1f hit zones mapped to width
+                        val leftBoundary = width * (1f / 3.5f)
+                        val rightBoundary = width * (2.5f / 3.5f)
+                        if (x < leftBoundary) {
+                            attemptPrevPageOrPrevSong()
+                        } else if (x > rightBoundary) {
+                            attemptNextPageOrNextSong()
                         }
                     }
                 },
@@ -179,14 +247,15 @@ fun ReaderScreen(
         }
         
         if (isLoading) {
-            Box(modifier = Modifier.fillMaxSize().background(Color(0xFF131313)), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
         } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF131313)) // Deep black for reader
+                    .background(Color.Black) // Deep black for reader
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                 .focusRequester(focusRequester)
                 .focusable()
                 .onKeyEvent { keyEvent ->
@@ -196,11 +265,7 @@ fun ReaderScreen(
                                 val now = System.currentTimeMillis()
                                 if (now - lastKeystrokeTime > 300) {
                                     lastKeystrokeTime = now
-                                    coroutineScope.launch {
-                                        if (pagerState.currentPage > 0) {
-                                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                                        }
-                                    }
+                                    attemptPrevPageOrPrevSong()
                                 }
                             }
                             true
@@ -210,11 +275,7 @@ fun ReaderScreen(
                                 val now = System.currentTimeMillis()
                                 if (now - lastKeystrokeTime > 300) {
                                     lastKeystrokeTime = now
-                                    coroutineScope.launch {
-                                        if (pagerState.currentPage < pageCount - 1) {
-                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                        }
-                                    }
+                                    attemptNextPageOrNextSong()
                                 }
                             }
                             true
@@ -230,7 +291,7 @@ fun ReaderScreen(
                     modifier = pagerModifier,
                     beyondViewportPageCount = 1
                 ) { page ->
-                    PageContent(page, localDocument, defaultPages)
+                    PageContent(page, localDocument, defaultPages, isChoirMode)
                 }
             } else {
                 HorizontalPager(
@@ -238,7 +299,7 @@ fun ReaderScreen(
                     modifier = pagerModifier,
                     beyondViewportPageCount = 1
                 ) { page ->
-                    PageContent(page, localDocument, defaultPages)
+                    PageContent(page, localDocument, defaultPages, isChoirMode)
                 }
             }
 
@@ -268,15 +329,92 @@ fun ReaderScreen(
                             
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = currentManuscript.title,
+                                    text = repertoire?.name ?: currentManuscript.title,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = currentManuscript.composer,
+                                    text = if (repertoire != null) {
+                                        val idx = (try {
+                                            val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
+                                            val ids = List(arr.length()) { i -> arr.getInt(i) }
+                                            ids.indexOf(manuscriptId)
+                                        } catch(e: Exception) { -1 }) + 1
+                                        val total = (try { org.json.JSONArray(repertoire!!.manuscriptIdsJson).length() } catch(e: Exception){ 0 })
+                                        "${currentManuscript.title} - $idx de $total"
+                                    } else {
+                                        currentManuscript.composer
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                
+                                var showMaestroPanel by remember { mutableStateOf(false) }
+
+                                val networkStatus by com.example.util.SessionNetworkManager.connectionStatus.collectAsStateWithLifecycle()
+                                val serverIpAndPort by com.example.util.SessionNetworkManager.serverIpAndPort.collectAsStateWithLifecycle()
+                                val clientsCount by com.example.util.SessionNetworkManager.connectedClientsCount.collectAsStateWithLifecycle()
+                                if (networkStatus != "Desconectado") {
+                                    val statusDot = when {
+                                        networkStatus.contains("Conectado") || networkStatus.contains("Sessão Aberta") -> "🟢"
+                                        networkStatus.contains("Reconectando") -> "🟡"
+                                        else -> "🔴"
+                                    }
+                                    val connectedColor = if (networkStatus.contains("Conectado") || networkStatus.contains("Sessão Aberta")) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.padding(top = 4.dp).clickable { showMaestroPanel = true }
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                                            Text(statusDot, modifier = Modifier.padding(end = 6.dp), style = MaterialTheme.typography.labelSmall)
+                                            Text(
+                                                text = "$networkStatus ${if(serverIpAndPort != null) "| $serverIpAndPort" else ""} ${if(clientsCount > 0) "| $clientsCount devs" else ""}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = connectedColor
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (showMaestroPanel) {
+                                    AlertDialog(
+                                        onDismissRequest = { showMaestroPanel = false },
+                                        title = { Text("Painel Maestro", style = MaterialTheme.typography.titleMedium) },
+                                        text = {
+                                            Column {
+                                                Text("Status: $networkStatus")
+                                                if (serverIpAndPort != null) Text("IP Sessão: $serverIpAndPort")
+                                                Text("Músicos Conectados: $clientsCount", modifier = Modifier.padding(top = 8.dp))
+                                                
+                                                if (currentRole == com.example.util.SessionRole.LEADER) {
+                                                    var currentNote by remember { mutableStateOf("") }
+                                                    OutlinedTextField(
+                                                        value = currentNote,
+                                                        onValueChange = { currentNote = it },
+                                                        label = { Text("Nota para integrantes (Ex: Tom G, Capo 2)") },
+                                                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                                                        trailingIcon = {
+                                                            IconButton(onClick = {
+                                                                com.example.util.SessionManager.broadcastPageChange(manuscriptId, pagerState.currentPage, currentNote)
+                                                            }) { Icon(Icons.Default.Send, contentDescription = "Enviar") }
+                                                        }
+                                                    )
+                                                }
+                                                
+                                                if (syncEvent?.note != null) {
+                                                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.padding(top = 16.dp).fillMaxWidth()) {
+                                                        Text("Aviso Maestro: ${syncEvent!!.note}", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(onClick = { showMaestroPanel = false }) { Text("Fechar") }
+                                        }
+                                    )
+                                }
                             }
                             
                             var showMenu by remember { mutableStateOf(false) }
@@ -295,6 +433,70 @@ fun ReaderScreen(
                                             showMenu = false
                                         }
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text(if (isStageMode) "Desativar Modo Palco" else "Ativar Modo Palco") },
+                                        onClick = {
+                                            isStageMode = !isStageMode
+                                            showHud = false
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (isChoirMode) "Desativar Modo Coral" else "Ativar Modo Coral") },
+                                        onClick = {
+                                            isChoirMode = !isChoirMode
+                                            showHud = false
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Ser Maestro (Leader)") },
+                                        onClick = {
+                                            com.example.util.SessionNetworkManager.startServer()
+                                            showMenu = false
+                                        }
+                                    )
+                                    var showFollowerDialog by remember { mutableStateOf(false) }
+                                    DropdownMenuItem(
+                                        text = { Text("Seguir Maestro") },
+                                        onClick = {
+                                            showFollowerDialog = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    if (showFollowerDialog) {
+                                        var ipInput by remember { mutableStateOf("") }
+                                        AlertDialog(
+                                            onDismissRequest = { showFollowerDialog = false },
+                                            title = { Text("Conectar ao Maestro", style = MaterialTheme.typography.titleMedium) },
+                                            text = {
+                                                OutlinedTextField(
+                                                    value = ipInput,
+                                                    onValueChange = { ipInput = it },
+                                                    label = { Text("IP:Porta (ex: 192.168.1.10:8080)") },
+                                                    singleLine = true,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            },
+                                            confirmButton = {
+                                                TextButton(onClick = {
+                                                    com.example.util.SessionNetworkManager.connectAsFollower(ipInput)
+                                                    showFollowerDialog = false
+                                                }) { Text("Conectar") }
+                                            },
+                                            dismissButton = {
+                                                TextButton(onClick = { showFollowerDialog = false }) { Text("Cancelar") }
+                                            }
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("Modo Individual") },
+                                        onClick = {
+                                            com.example.util.SessionNetworkManager.stopAll()
+                                            showMenu = false
+                                        }
+                                    )
+
                                 }
                             }
                         }
@@ -303,36 +505,42 @@ fun ReaderScreen(
                     // Bottom Bar
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
-                        shape = RoundedCornerShape(50),
+                        shape = RoundedCornerShape(24.dp),
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 32.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            IconButton(onClick = { 
-                                coroutineScope.launch {
-                                    if (pagerState.currentPage > 0) pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                IconButton(onClick = { 
+                                    attemptPrevPageOrPrevSong()
+                                }) {
+                                    Icon(Icons.Default.ChevronLeft, contentDescription = stringResource(R.string.previous))
                                 }
-                            }) {
-                                Icon(Icons.Default.ChevronLeft, contentDescription = stringResource(R.string.previous))
+                                
+                                Text(
+                                    text = "${pagerState.currentPage + 1} / $pageCount",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                                
+                                IconButton(onClick = { 
+                                    attemptNextPageOrNextSong()
+                                }) {
+                                    Icon(Icons.Default.ChevronRight, contentDescription = stringResource(R.string.next))
+                                }
                             }
                             
-                            Text(
-                                text = "${pagerState.currentPage + 1} / $pageCount",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                            Slider(
+                                value = autoScrollSpeed,
+                                onValueChange = { autoScrollSpeed = it },
+                                valueRange = 0f..5f,
+                                steps = 5,
+                                modifier = Modifier.padding(horizontal = 32.dp).fillMaxWidth(0.5f)
                             )
-                            
-                            IconButton(onClick = { 
-                                coroutineScope.launch {
-                                    if (pagerState.currentPage < pageCount - 1) pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                }
-                            }) {
-                                Icon(Icons.Default.ChevronRight, contentDescription = stringResource(R.string.next))
-                            }
                         }
                     }
                 }
@@ -348,10 +556,11 @@ fun ReaderScreen(
 }
 
 @Composable
-fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, defaultPages: List<String>) {
+fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, defaultPages: List<String>, isChoirMode: Boolean = false) {
+    val bgColor = if (localDocument is com.example.util.DocumentContent.TextDoc || localDocument is com.example.util.DocumentContent.HtmlDoc) Color(0xFFFCFAF2) else Color.Transparent
     Box(modifier = Modifier
         .fillMaxSize()
-        .background(Color(0xFFFCFAF2))
+        .background(bgColor)
     ) {
         if (localDocument is com.example.util.DocumentContent.TextDoc) {
             val scrollState = rememberScrollState()
@@ -361,7 +570,7 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                     .fillMaxSize()
                     .padding(16.dp)
                     .verticalScroll(scrollState),
-                style = MaterialTheme.typography.bodyLarge,
+                style = if (isChoirMode) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.bodyLarge,
                 color = Color.Black
             )
         } else if (localDocument is com.example.util.DocumentContent.HtmlDoc) {
@@ -373,7 +582,9 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                     }
                 },
                 update = { webView ->
-                    webView.loadDataWithBaseURL(null, localDocument.html, "text/html", "utf-8", null)
+                    val extraScale = if (isChoirMode) "body { font-size: 150% !important; }" else ""
+                    val modifiedHtml = localDocument.html.replace("</style>", "$extraScale</style>")
+                    webView.loadDataWithBaseURL(null, modifiedHtml, "text/html", "utf-8", null)
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -400,7 +611,7 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                     bitmap = bitmap!!.asImageBitmap(),
                     contentDescription = stringResource(R.string.page_desc, page + 1),
                     contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().padding(16.dp).shadow(12.dp)
                 )
             } else if (hasError) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

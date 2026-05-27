@@ -29,6 +29,9 @@ interface ManuscriptDao {
     @Update
     suspend fun updateManuscript(manuscript: Manuscript)
 
+    @Query("UPDATE manuscripts SET lastUsedTimestamp = :timestamp WHERE id = :id")
+    suspend fun updateLastUsed(id: Int, timestamp: Long)
+
     @Delete
     suspend fun deleteManuscript(manuscript: Manuscript)
 }

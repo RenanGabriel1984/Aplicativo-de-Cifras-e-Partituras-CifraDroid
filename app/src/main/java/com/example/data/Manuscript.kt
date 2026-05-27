@@ -15,5 +15,8 @@ data class Manuscript(
     val keySignature: String = "",
     val era: String = "",
     val localUri: String? = null,
-    val extractedText: String = ""
+    val extractedText: String = "",
+    val capo: Int = 0,
+    val tone: String = "",
+    val liturgicalNotes: String = ""
 )

@@ -87,5 +87,12 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
         }
     }
 
-    fun getById(id: Int) = repository.getById(id)
+    fun getById(id: Int): kotlinx.coroutines.flow.Flow<Manuscript> {
+        viewModelScope.launch {
+            repository.updateLastUsed(id, System.currentTimeMillis())
+        }
+        return repository.getById(id)
+    }
+
+    fun getRepertoire(id: Int) = repository.getRepertoire(id)
 }

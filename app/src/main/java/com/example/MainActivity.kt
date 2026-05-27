@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         val database = AppDatabase.getDatabase(this)
-        val repository = ManuscriptRepository(database.manuscriptDao())
+        val repository = ManuscriptRepository(database.manuscriptDao(), database.repertoireDao())
         val pedalManager = PedalManager(applicationContext)
         
         setContent {

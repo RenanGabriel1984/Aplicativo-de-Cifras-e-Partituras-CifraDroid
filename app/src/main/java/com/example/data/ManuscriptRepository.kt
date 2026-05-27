@@ -2,7 +2,7 @@ package com.example.data
 
 import kotlinx.coroutines.flow.Flow
 
-class ManuscriptRepository(private val manuscriptDao: ManuscriptDao) {
+class ManuscriptRepository(private val manuscriptDao: ManuscriptDao, private val repertoireDao: RepertoireDao) {
     val allManuscripts: Flow<List<Manuscript>> = manuscriptDao.getAllManuscripts()
     val favoriteManuscripts: Flow<List<Manuscript>> = manuscriptDao.getFavorites()
 
@@ -18,7 +18,13 @@ class ManuscriptRepository(private val manuscriptDao: ManuscriptDao) {
         manuscriptDao.insertManuscript(manuscript)
     }
 
+    suspend fun updateLastUsed(id: Int, timestamp: Long) {
+        manuscriptDao.updateLastUsed(id, timestamp)
+    }
+
     suspend fun toggleFavorite(manuscript: Manuscript) {
         manuscriptDao.updateManuscript(manuscript.copy(isFavorite = !manuscript.isFavorite))
     }
+
+    fun getRepertoire(id: Int): Flow<Repertoire> = repertoireDao.getRepertoireById(id)
 }
