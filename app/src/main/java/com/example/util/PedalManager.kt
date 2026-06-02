@@ -35,6 +35,10 @@ class PedalManager(context: Context) {
         checkDevices()
     }
 
+    fun cleanup() {
+        inputManager.unregisterInputDeviceListener(inputDeviceListener)
+    }
+
     private fun checkDevices() {
         var foundPedal = false
         var pName = ""

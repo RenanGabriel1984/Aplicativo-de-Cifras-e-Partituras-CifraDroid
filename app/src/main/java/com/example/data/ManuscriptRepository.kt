@@ -2,7 +2,12 @@ package com.example.data
 
 import kotlinx.coroutines.flow.Flow
 
-class ManuscriptRepository(private val manuscriptDao: ManuscriptDao, private val repertoireDao: RepertoireDao) {
+class ManuscriptRepository(
+    private val manuscriptDao: ManuscriptDao, 
+    private val repertoireDao: RepertoireDao,
+    private val transpositionDao: TranspositionDao,
+    private val pdfTextContentDao: PdfTextContentDao
+) {
     val allManuscripts: Flow<List<Manuscript>> = manuscriptDao.getAllManuscripts()
     val favoriteManuscripts: Flow<List<Manuscript>> = manuscriptDao.getFavorites()
 
@@ -14,8 +19,8 @@ class ManuscriptRepository(private val manuscriptDao: ManuscriptDao, private val
         manuscriptDao.insertAll(initialData)
     }
 
-    suspend fun insert(manuscript: Manuscript) {
-        manuscriptDao.insertManuscript(manuscript)
+    suspend fun insert(manuscript: Manuscript): Long {
+        return manuscriptDao.insertManuscript(manuscript)
     }
 
     suspend fun updateLastUsed(id: Int, timestamp: Long) {
@@ -26,5 +31,26 @@ class ManuscriptRepository(private val manuscriptDao: ManuscriptDao, private val
         manuscriptDao.updateManuscript(manuscript.copy(isFavorite = !manuscript.isFavorite))
     }
 
+    suspend fun delete(manuscript: Manuscript) {
+        pdfTextContentDao.deletePdfText(manuscript.id)
+        manuscriptDao.deleteManuscript(manuscript)
+    }
+
     fun getRepertoire(id: Int): Flow<Repertoire> = repertoireDao.getRepertoireById(id)
+
+    fun getPreferredKey(manuscriptId: Int) = transpositionDao.getPreference(manuscriptId)
+
+    suspend fun savePreferredKey(preference: TranspositionPreference) {
+        transpositionDao.savePreference(preference)
+    }
+
+    fun getPdfText(manuscriptId: Int) = pdfTextContentDao.getPdfText(manuscriptId)
+
+    suspend fun savePdfText(pdfTextContent: PdfTextContent) {
+        pdfTextContentDao.savePdfText(pdfTextContent)
+    }
+    
+    suspend fun deletePdfText(manuscriptId: Int) {
+        pdfTextContentDao.deletePdfText(manuscriptId)
+    }
 }

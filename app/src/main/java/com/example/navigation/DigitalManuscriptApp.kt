@@ -40,7 +40,8 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
         composable("pedal_settings") {
             PedalSettingsScreen(
                 viewModel = viewModel,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToMaestro = { navController.navigate("maestro") }
             )
         }
         composable("maestro") {
@@ -71,6 +72,9 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
                     navController.navigate("reader/$nextId?repertoireId=$repId") {
                         popUpTo("library") // avoid giant backstacks
                     }
+                },
+                onNavigateToSettings = {
+                    navController.navigate("pedal_settings")
                 }
             )
         }

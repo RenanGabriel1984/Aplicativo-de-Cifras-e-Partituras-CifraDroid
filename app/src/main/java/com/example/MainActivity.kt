@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModelStoreOwner
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: MainViewModel
+    private lateinit var pedalManager: PedalManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,8 +26,13 @@ class MainActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         val database = AppDatabase.getDatabase(this)
-        val repository = ManuscriptRepository(database.manuscriptDao(), database.repertoireDao())
-        val pedalManager = PedalManager(applicationContext)
+        val repository = ManuscriptRepository(
+            database.manuscriptDao(), 
+            database.repertoireDao(),
+            database.transpositionDao(),
+            database.pdfTextContentDao()
+        )
+        pedalManager = PedalManager(applicationContext)
         
         setContent {
             MyApplicationTheme {
@@ -35,6 +41,13 @@ class MainActivity : ComponentActivity() {
                 )
                 DigitalManuscriptApp(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::pedalManager.isInitialized) {
+            pedalManager.cleanup()
         }
     }
 
@@ -50,7 +63,14 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent) {
         val uri: Uri? = when (intent.action) {
-            Intent.ACTION_SEND -> intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+            Intent.ACTION_SEND -> {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+                }
+            }
             Intent.ACTION_VIEW -> intent.data
             else -> null
         }

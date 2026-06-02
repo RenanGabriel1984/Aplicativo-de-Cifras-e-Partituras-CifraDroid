@@ -62,17 +62,26 @@ object SessionNetworkManager {
         discoveryJob?.cancel()
         discoveryJob = scope.launch(Dispatchers.IO) {
             try {
-                val socket = DatagramSocket()
-                socket.broadcast = true
-                val message = "MAESTRO_DISCOVERY|$pin|$ip:$port"
-                val buffer = message.toByteArray()
-                val address = InetAddress.getByName("255.255.255.255")
-                while (isActive) {
-                    val packet = DatagramPacket(buffer, buffer.size, address, 8081)
-                    socket.send(packet)
-                    delay(2000)
+                DatagramSocket().use { socket ->
+                    socket.broadcast = true
+                    val message = "MAESTRO_DISCOVERY|$pin|$ip:$port"
+                    val buffer = message.toByteArray()
+                    val address = InetAddress.getByName("255.255.255.255")
+                    while (isActive) {
+                        try {
+                            val packet = DatagramPacket(buffer, buffer.size, address, 8081)
+                            socket.send(packet)
+                            delay(2000)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            break
+                        }
+                    }
                 }
-                socket.close()
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -135,43 +144,57 @@ object SessionNetworkManager {
             var targetIp: String? = null
             
             try {
-                val socket = DatagramSocket(8081)
-                socket.soTimeout = 10000 // 10 seconds timeout to find
-                val buffer = ByteArray(256)
-                while (isActive && targetIp == null) {
-                    val packet = DatagramPacket(buffer, buffer.size)
-                    socket.receive(packet)
-                    val received = String(packet.data, 0, packet.length)
-                    if (received.startsWith("MAESTRO_DISCOVERY|$pin|")) {
-                        targetIp = received.split("|")[2]
+                DatagramSocket(8081).use { socket ->
+                    socket.soTimeout = 10000 // 10 seconds timeout to find
+                    val buffer = ByteArray(256)
+                    while (isActive && targetIp == null) {
+                        try {
+                            val packet = DatagramPacket(buffer, buffer.size)
+                            socket.receive(packet)
+                            val received = String(packet.data, 0, packet.length)
+                            if (received.startsWith("MAESTRO_DISCOVERY|$pin|")) {
+                                targetIp = received.split("|")[2]
+                            }
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: java.net.SocketTimeoutException) {
+                            continue // just timeout, keep searching
+                        } catch (e: Exception) {
+                            break // real error
+                        }
                     }
                 }
-                socket.close()
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (e: Exception) {
                 _connectionStatus.value = "Sessão não encontrada."
                 SessionManager.setRole(SessionRole.STANDALONE)
                 return@launch
             }
             
-            if (targetIp != null) {
-                connectToDirectIp(targetIp)
+            val finalIp = targetIp
+            if (finalIp != null) {
+                connectToDirectIp(finalIp)
             }
         }
     }
 
     fun connectToDirectIp(ipString: String) {
-        // ... (called internally by connectViaPin)
+        // ... (called internally by connectViaPin and direct IP flow)
         val parts = ipString.split(":")
         val ip = parts.getOrNull(0) ?: return
         val port = parts.getOrNull(1)?.toIntOrNull() ?: 8080
         
-        scope.launch(Dispatchers.IO) {
+        clientJob?.cancel()
+        clientJob = scope.launch(Dispatchers.IO) {
             var failCount = 0
             while (isActive && SessionManager.currentRole.value == SessionRole.FOLLOWER) {
                 try {
                     _connectionStatus.value = "Conectando a Maestro..."
-                    clientSocket = Socket()
-                    clientSocket!!.connect(java.net.InetSocketAddress(ip, port), 5000)
+                    withTimeout(5000L) {
+                        clientSocket = Socket()
+                        clientSocket!!.connect(java.net.InetSocketAddress(ip, port), 5000)
+                    }
                     val reader = BufferedReader(InputStreamReader(clientSocket!!.getInputStream()))
                     _connectionStatus.value = "Conectado ao Maestro"
                     failCount = 0
@@ -197,10 +220,15 @@ object SessionNetworkManager {
                     try { clientSocket?.close() } catch(e: Exception) {}
                     clientSocket = null
                     
-                    if (SessionManager.currentRole.value == SessionRole.FOLLOWER) {
+                    if (isActive && SessionManager.currentRole.value == SessionRole.FOLLOWER) {
                         _connectionStatus.value = "Reconectando..."
                         delay(2500)
                         failCount++
+                        if (failCount > 3) {
+                            SessionManager.setRole(SessionRole.STANDALONE)
+                            _connectionStatus.value = "Desconectado"
+                            break
+                        }
                     }
                 }
             }

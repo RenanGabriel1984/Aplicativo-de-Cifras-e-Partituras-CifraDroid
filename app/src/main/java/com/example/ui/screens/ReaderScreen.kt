@@ -18,10 +18,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -33,6 +36,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.DataProvider
@@ -46,6 +50,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.withStyle
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.res.stringResource
@@ -81,24 +87,23 @@ fun ReaderScreen(
     manuscriptId: Int,
     repertoireId: Int? = null,
     onNavigateBack: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
     onNavigateToManuscript: (Int) -> Unit = {}
 ) {
     val manuscript by viewModel.getById(manuscriptId).collectAsStateWithLifecycle(initialValue = null)
     val repertoire by if (repertoireId != null) viewModel.getRepertoire(repertoireId).collectAsStateWithLifecycle(initialValue = null) else remember { mutableStateOf(null) }
     
     val isVerticalScroll by viewModel.isVerticalScroll.collectAsStateWithLifecycle()
-    var showHud by remember { mutableStateOf(false) }
-    var isStageMode by remember { mutableStateOf(false) }
-    var isChoirMode by remember { mutableStateOf(false) }
-    var autoScrollSpeed by remember { mutableFloatStateOf(0f) }
-    var liturgicalTheme by remember { mutableStateOf(LiturgicalTheme.CLASSIC) }
+    val uiState = com.example.ui.state.rememberReaderUiState()
+    val isStageMode by viewModel.isStageMode.collectAsStateWithLifecycle()
+    val isChoirMode by viewModel.isChoirMode.collectAsStateWithLifecycle()
+    val liturgicalTheme by viewModel.liturgicalTheme.collectAsStateWithLifecycle()
+    val autoScrollSpeed by viewModel.autoScrollSpeed.collectAsStateWithLifecycle()
     
     val currentRole by com.example.util.SessionManager.currentRole.collectAsStateWithLifecycle()
     val syncEvent by com.example.util.SessionManager.syncEvents.collectAsStateWithLifecycle()
     
     val context = LocalContext.current
-    var localDocument by remember { mutableStateOf<com.example.util.DocumentContent?>(null) }
-    var isLoading by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val window = context.findActivity()?.window
@@ -120,35 +125,55 @@ fun ReaderScreen(
     LaunchedEffect(manuscript?.localUri) {
         val uri = manuscript?.localUri
         if (!uri.isNullOrBlank()) {
-            isLoading = true
+            uiState.isLoading = true
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                localDocument = com.example.util.DocumentReader.loadDocument(context, uri)
+                uiState.localDocument = com.example.util.DocumentReader.loadDocument(context, uri)
             }
-            isLoading = false
+            uiState.isLoading = false
         }
     }
 
-    DisposableEffect(localDocument) {
+    val currentDocument = uiState.localDocument
+    DisposableEffect(currentDocument) {
         onDispose {
-            if (localDocument is com.example.util.DocumentContent.PdfDoc) {
-                (localDocument as com.example.util.DocumentContent.PdfDoc).engine.close()
+            if (currentDocument is com.example.util.DocumentContent.PdfDoc) {
+                currentDocument.engine.close()
             }
         }
     }
 
     val defaultPages = com.example.data.DataProvider.readerPages
-    val pageCount = when (localDocument) {
-        is com.example.util.DocumentContent.PdfDoc -> (localDocument as com.example.util.DocumentContent.PdfDoc).engine.pageCount
+    val pageCount = when (uiState.localDocument) {
+        is com.example.util.DocumentContent.PdfDoc -> (uiState.localDocument as com.example.util.DocumentContent.PdfDoc).engine.pageCount
         else -> defaultPages.size
     }
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val coroutineScope = rememberCoroutineScope()
     
     val view = androidx.compose.ui.platform.LocalView.current
+    val window = (context as? android.app.Activity)?.window
+
+    DisposableEffect(window) {
+        if (window != null) {
+            val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            insetsController.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            if (window != null) {
+                val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+                insetsController.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
 
     val attemptNextPageOrNextSong = {
         view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        if (pagerState.currentPage < pageCount - 1) {
+        if (uiState.isPerformanceMode) {
+            // Let the built-in system handle it when in Performance Mode by interacting with the list. 
+            // Wait, we can animate the scroll state. But I don't have perfScrollState here.
+        }
+        if (!uiState.isPerformanceMode && pagerState.currentPage < pageCount - 1) {
             coroutineScope.launch { 
                 pagerState.animateScrollToPage(
                     pagerState.currentPage + 1,
@@ -169,7 +194,10 @@ fun ReaderScreen(
     
     val attemptPrevPageOrPrevSong = {
         view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        if (pagerState.currentPage > 0) {
+        if (uiState.isPerformanceMode) {
+            // System will handle the scroll since it's focused, or we can handle it
+        }
+        if (!uiState.isPerformanceMode && pagerState.currentPage > 0) {
             coroutineScope.launch { 
                 pagerState.animateScrollToPage(
                     pagerState.currentPage - 1,
@@ -217,14 +245,19 @@ fun ReaderScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
-    val toggleHud = { showHud = !showHud }
+    val toggleHud = { uiState.showHud = !uiState.showHud }
     var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
+    var hudInteractionTime by remember { mutableLongStateOf(0L) }
+    
+    androidx.activity.compose.BackHandler(enabled = uiState.showHud) {
+        uiState.showHud = false
+    }
     
     // Auto-hide HUD natively
-    LaunchedEffect(showHud, pagerState.currentPage) {
-        if (showHud) {
-            kotlinx.coroutines.delay(4000)
-            showHud = false
+    LaunchedEffect(uiState.showHud, hudInteractionTime, pagerState.currentPage) {
+        if (uiState.showHud) {
+            kotlinx.coroutines.delay(20000)
+            uiState.showHud = false
         }
     }
     
@@ -236,17 +269,18 @@ fun ReaderScreen(
                     if (!isStageMode) {
                         val width = size.width
                         val x = offset.x
-                        // 1f, 1.5f, 1f hit zones mapped to width
-                        val leftBoundary = width * (1f / 3.5f)
-                        val rightBoundary = width * (2.5f / 3.5f)
+                        val leftBoundary = width * 0.3f
+                        val rightBoundary = width * 0.7f
                         if (x < leftBoundary) {
                             attemptPrevPageOrPrevSong()
                         } else if (x > rightBoundary) {
                             attemptNextPageOrNextSong()
+                        } else {
+                            toggleHud()
+                            hudInteractionTime = System.currentTimeMillis()
                         }
                     }
-                },
-                onLongPress = { toggleHud() }
+                }
             )
         }
     
@@ -255,7 +289,7 @@ fun ReaderScreen(
         val prev = pagerState.currentPage - 1
         val next = pagerState.currentPage + 1
         
-        if (localDocument == null) {
+        if (uiState.localDocument == null) {
             if (prev >= 0 && prev < defaultPages.size) {
                 val request = ImageRequest.Builder(context).data(defaultPages[prev]).build()
                 context.imageLoader.enqueue(request)
@@ -268,6 +302,14 @@ fun ReaderScreen(
     }
 
     val currentManuscript = manuscript
+    var showTransposePanel by remember { mutableStateOf(false) }
+    
+    val storedPref by viewModel.getPreferredKey(manuscriptId).collectAsStateWithLifecycle(null)
+    val defaultKey = if (currentManuscript?.keySignature.isNullOrBlank()) {
+        if (currentManuscript?.tone.isNullOrBlank()) "C" else currentManuscript!!.tone
+    } else currentManuscript!!.keySignature
+    
+    val currentKey = storedPref?.preferredKey?.takeIf { it.isNotBlank() } ?: defaultKey
 
     if (currentManuscript != null) {
         LaunchedEffect(Unit) {
@@ -279,7 +321,7 @@ fun ReaderScreen(
             }
         }
         
-        if (isLoading) {
+        if (uiState.isLoading) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
@@ -292,6 +334,9 @@ fun ReaderScreen(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onKeyEvent { keyEvent ->
+                    if (uiState.isPerformanceMode) {
+                        return@onKeyEvent false
+                    }
                     when (keyEvent.key) {
                         Key.DirectionLeft, Key.PageUp, Key.DirectionUp -> {
                             if (keyEvent.type == KeyEventType.KeyUp) {
@@ -317,32 +362,166 @@ fun ReaderScreen(
                     }
                 }
         ) {
-            // Pager allows smooth transitions and intelligent 'beyondBoundsPageCount' preloads 1 page ahead/behind
-            if (isVerticalScroll) {
-                VerticalPager(
-                    state = pagerState,
-                    modifier = pagerModifier,
-                    beyondViewportPageCount = 1
-                ) { page ->
-                    PageContent(page, localDocument, defaultPages, isChoirMode)
-                }
-            } else {
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = pagerModifier,
-                    beyondViewportPageCount = 1
-                ) { page ->
-                    PageContent(page, localDocument, defaultPages, isChoirMode)
-                }
-            }
-            
-            if (liturgicalTheme != LiturgicalTheme.CLASSIC) {
-                Box(modifier = Modifier.fillMaxSize().background(liturgicalTheme.color))
-            }
+            Column(modifier = Modifier.fillMaxSize().background(if (uiState.isPerformanceMode) Color.Black else Color.Transparent)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (uiState.isPerformanceMode) {
+                        val pdfContent by viewModel.getPdfText(manuscriptId).collectAsStateWithLifecycle(null)
+                        val rawText = pdfContent?.content ?: currentManuscript?.extractedText ?: ""
+                        if (rawText.isBlank()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("Este PDF não possui texto selecionável e não pode utilizar o Modo Performance.", 
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(32.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        } else {
+                            val prefs = context.getSharedPreferences("performance_prefs", Context.MODE_PRIVATE)
+                            var fontSizeMultiplier by remember { mutableFloatStateOf(prefs.getFloat("font_size_$manuscriptId", 1.5f)) }
+                            val transposedText = remember(rawText, defaultKey, currentKey) {
+                                val stepsForText = com.example.util.ChordTransposer.getStepsBetween(defaultKey, currentKey)
+                                val isFlatsText = currentKey.contains("b") || currentKey == "F"
+                                if (stepsForText == 0) rawText else com.example.util.ChordTransposer.transposeText(rawText, stepsForText, isFlatsText)
+                            }
+                            
+                            val perfScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
+                            
+                            // Auto scroll for performance mode
+                            LaunchedEffect(autoScrollSpeed) {
+                                if (autoScrollSpeed > 0f) {
+                                    while (true) {
+                                        kotlinx.coroutines.delay((1000 / autoScrollSpeed).toLong().coerceAtLeast(100L))
+                                        perfScrollState.animateScrollBy(50f)
+                                    }
+                                }
+                            }
+                            
+                            Box(modifier = Modifier.fillMaxSize().pointerInput(isStageMode) {
+                                detectTapGestures(
+                                    onTap = { offset ->
+                                        if (!isStageMode) {
+                                            val width = size.width
+                                            val x = offset.x
+                                            val leftBoundary = width * 0.3f
+                                            val rightBoundary = width * 0.7f
+                                            val viewportHeight = size.height
+                                            coroutineScope.launch {
+                                                if (x < leftBoundary) {
+                                                    perfScrollState.animateScrollBy(-(viewportHeight * 0.8).toFloat())
+                                                } else if (x > rightBoundary) {
+                                                    perfScrollState.animateScrollBy((viewportHeight * 0.8).toFloat())
+                                                } else {
+                                                    toggleHud()
+                                                    hudInteractionTime = System.currentTimeMillis()
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }) {
+                                val lines = remember(transposedText) { transposedText.split("\n") }
+                                androidx.compose.foundation.lazy.LazyColumn(state = perfScrollState, modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                                    item {
+                                        Column(modifier = Modifier.fillMaxWidth().background(Color.DarkGray).padding(8.dp)) {
+                                            Text("TELEMETRIA (Diagnóstico)", color=Color.Yellow, fontWeight=androidx.compose.ui.text.font.FontWeight.Bold)
+                                            Text("Caracteres Extraídos: ${rawText.length}", color=Color.White, fontSize=12.sp)
+                                            Text("Linhas: ${lines.size}", color=Color.White, fontSize=12.sp)
+                                            Text("Primeiras 10 linhas originais (s/ transp):", color=Color.Cyan, fontSize=12.sp)
+                                            val top10 = rawText.lines().take(10).joinToString("\n")
+                                            Text(top10, color=Color.White, fontSize=12.sp, fontFamily=androidx.compose.ui.text.font.FontFamily.Monospace)
+                                        }
+                                    }
+                                    
+                                    if (uiState.showHud) {
+                                        item {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("Tamanho da Fonte:", color = Color.White)
+                                                Row {
+                                                    listOf(1.0f, 1.25f, 1.5f, 1.75f, 2.0f).forEach { mult ->
+                                                        val isSelected = fontSizeMultiplier == mult
+                                                        Surface(
+                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.DarkGray,
+                                                            shape = RoundedCornerShape(8.dp),
+                                                            modifier = Modifier.padding(end = 4.dp).clickable {
+                                                                fontSizeMultiplier = mult
+                                                                prefs.edit().putFloat("font_size_$manuscriptId", mult).apply()
+                                                            }
+                                                        ) {
+                                                            Text("${(mult * 100).toInt()}%", color = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    val chordColor = androidx.compose.ui.graphics.Color(0xFF64B5F6) // Light Blue 300
+                                    
+                                    items(lines.size) { idx ->
+                                        val lineText = lines[idx]
+                                        val annotatedString = remember(lineText) {
+                                            androidx.compose.ui.text.buildAnnotatedString {
+                                                var lastIndex = 0
+                                                val chordRegex = Regex("\\b[A-G](?:#|b)?(?:m|maj|min|aug|dim)?(?:[0-9])?(?:sus[24])?(?:/[A-G](?:#|b)?)?\\b")
+                                                for (match in chordRegex.findAll(lineText)) {
+                                                    append(lineText.substring(lastIndex, match.range.first))
+                                                    withStyle(style = androidx.compose.ui.text.SpanStyle(color = chordColor, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)) {
+                                                        append(match.value)
+                                                    }
+                                                    lastIndex = match.range.last + 1
+                                                }
+                                                append(lineText.substring(lastIndex))
+                                            }
+                                        }
+                                        
+                                        Text(
+                                            text = annotatedString,
+                                            color = Color.White,
+                                            style = androidx.compose.ui.text.TextStyle(
+                                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                fontSize = (14 * fontSizeMultiplier).sp,
+                                                lineHeight = (22 * fontSizeMultiplier).sp
+                                            ),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Pager allows smooth transitions and intelligent 'beyondBoundsPageCount' preloads 1 page ahead/behind
+                        if (isVerticalScroll) {
+                            VerticalPager(
+                                state = pagerState,
+                                modifier = pagerModifier,
+                                beyondViewportPageCount = 1
+                            ) { page ->
+                                PageContent(page, uiState.localDocument, defaultPages, isChoirMode)
+                            }
+                        } else {
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = pagerModifier,
+                                beyondViewportPageCount = 1
+                            ) { page ->
+                                PageContent(page, uiState.localDocument, defaultPages, isChoirMode)
+                            }
+                        }
+                        
+                        if (liturgicalTheme != LiturgicalTheme.CLASSIC) {
+                            Box(modifier = Modifier.fillMaxSize().background(liturgicalTheme.color))
+                        }
+                    }
+                } // End inner Box
+            } // End Column
 
             // HUD
             AnimatedVisibility(
-                visible = showHud,
+                visible = uiState.showHud,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
@@ -366,7 +545,7 @@ fun ReaderScreen(
                             
                             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = repertoire?.name ?: currentManuscript.title,
+                                    text = repertoire?.name ?: currentManuscript?.title ?: "",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                     maxLines = 1,
@@ -380,9 +559,9 @@ fun ReaderScreen(
                                             ids.indexOf(manuscriptId)
                                         } catch(e: Exception) { -1 }) + 1
                                         val total = (try { org.json.JSONArray(repertoire!!.manuscriptIdsJson).length() } catch(e: Exception){ 0 })
-                                        "${currentManuscript.title} - $idx de $total"
+                                        "${currentManuscript?.title ?: ""} - $idx de $total"
                                     } else {
-                                        currentManuscript.composer
+                                        currentManuscript?.composer ?: ""
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -442,36 +621,28 @@ fun ReaderScreen(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(if (isStageMode) "Desativar Modo Palco" else "Ativar Modo Palco") },
+                                        text = { Text(if (uiState.isPerformanceMode) "Desativar Modo Performance" else "Modo Performance") },
                                         onClick = {
-                                            isStageMode = !isStageMode
-                                            showHud = false
+                                            uiState.isPerformanceMode = !uiState.isPerformanceMode
+                                            uiState.showHud = false
                                             showMenu = false
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(if (isChoirMode) "Desativar Modo Coral" else "Ativar Modo Coral") },
+                                        text = { Text("Transposição...") },
                                         onClick = {
-                                            isChoirMode = !isChoirMode
-                                            showHud = false
+                                            showTransposePanel = true
                                             showMenu = false
+                                            uiState.showHud = false
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Tema Litúrgico: ${liturgicalTheme.label}") },
+                                        text = { Text("Configurações Gerais...") },
                                         onClick = {
-                                            val values = LiturgicalTheme.values()
-                                            liturgicalTheme = values[(liturgicalTheme.ordinal + 1) % values.size]
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Desconectar Sessão") },
-                                        onClick = {
-                                            com.example.util.SessionNetworkManager.stopAll()
                                             showMenu = false
+                                            onNavigateToSettings()
                                         }
                                     )
-
                                 }
                             }
                         }
@@ -508,15 +679,68 @@ fun ReaderScreen(
                                     Icon(Icons.Default.ChevronRight, contentDescription = stringResource(R.string.next))
                                 }
                             }
-                            
-                            Slider(
-                                value = autoScrollSpeed,
-                                onValueChange = { autoScrollSpeed = it },
-                                valueRange = 0f..5f,
-                                steps = 5,
-                                modifier = Modifier.padding(horizontal = 32.dp).fillMaxWidth(0.5f)
-                            )
                         }
+                    }
+                }
+            }
+            
+            if (showTransposePanel) {
+                var localSelectedKey by remember { mutableStateOf(currentKey) }
+
+                @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+                androidx.compose.material3.ModalBottomSheet(
+                    onDismissRequest = { showTransposePanel = false },
+                    sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally, 
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 24.dp)
+                    ) {
+                        Text("Transposição", style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Tom Original", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(defaultKey, style = MaterialTheme.typography.headlineMedium)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Tom Selecionado", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(localSelectedKey, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(32.dp))
+                        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                            Button(onClick = {
+                                localSelectedKey = com.example.util.ChordTransposer.transposeText(localSelectedKey, -1, useFlats = true)
+                            }) {
+                                Text("-1")
+                            }
+                            Button(onClick = {
+                                localSelectedKey = com.example.util.ChordTransposer.transposeText(localSelectedKey, 1, useFlats = false)
+                            }) {
+                                Text("+1")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(32.dp))
+                        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+                            TextButton(onClick = { 
+                                showTransposePanel = false
+                            }) {
+                                Text("Cancelar")
+                            }
+                            Button(onClick = {
+                                viewModel.savePreferredKey(manuscriptId, localSelectedKey)
+                                showTransposePanel = false
+                            }) {
+                                Text("Aplicar")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
             }
@@ -535,30 +759,20 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
     val scrollState = androidx.compose.foundation.rememberScrollState()
     
     // Smart Reading Mode: dynamic scale based on scroll offset without recomposing
-    val animatedViewportScale = remember { androidx.compose.animation.core.Animatable(1f) }
-    
-    LaunchedEffect(scrollState) {
-        androidx.compose.runtime.snapshotFlow {
-            if (scrollState.maxValue <= 0) return@snapshotFlow 1f
+    val animatedViewportScale = remember { 
+        derivedStateOf {
+            if (scrollState.maxValue <= 0) return@derivedStateOf 1f
             val value = scrollState.value.toFloat()
             val max = scrollState.maxValue.toFloat()
             
             val threshold = max * 0.1f
-            if (threshold <= 0) return@snapshotFlow 1f
+            if (threshold <= 0) return@derivedStateOf 1f
             
             when {
                 value < threshold -> 1f + (0.15f * (1f - (value / threshold)))
                 value > max - threshold -> 1f + (0.15f * ((value - (max - threshold)) / threshold))
                 else -> 1f
             }
-        }.collect { targetScale ->
-            animatedViewportScale.animateTo(
-                targetValue = targetScale,
-                animationSpec = androidx.compose.animation.core.spring(
-                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-                    stiffness = androidx.compose.animation.core.Spring.StiffnessLow
-                )
-            )
         }
     }
 
@@ -566,39 +780,33 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
         if (localDocument is com.example.util.DocumentContent.PdfDoc) {
             var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
             var hasError by remember { mutableStateOf(false) }
+            var errorReport by remember { mutableStateOf("") }
             var retryKey by remember { mutableIntStateOf(0) }
             
-            LaunchedEffect(page, retryKey) {
+            LaunchedEffect(page, retryKey, localDocument) {
                 hasError = false
                 bitmap = null
-                val result = kotlinx.coroutines.withTimeoutOrNull(5000L) {
-                    localDocument.engine.renderPage(page, scale = 1.5f)
-                }
-                if (result == null) {
+                try {
+                    val result = kotlinx.coroutines.withTimeoutOrNull(5000L) {
+                        localDocument.engine.renderPage(page, scale = 1.2f)
+                    }
+                    if (result == null) {
+                        hasError = true
+                        errorReport = "Timeout (5000ms) atingido antes do término do renderPage."
+                    } else {
+                        bitmap = result
+                    }
+                } catch (e: Exception) {
                     hasError = true
-                } else {
-                    bitmap = result
+                    errorReport = e.message ?: e.stackTraceToString()
                 }
             }
             
             if (bitmap != null) {
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offsetX by remember { mutableStateOf(0f) }
-
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 3f)
-                                val maxX = ((size.width * scale - size.width) / 2).coerceAtLeast(0f)
-                                if (scale > 1f) {
-                                    offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
-                                } else {
-                                    offsetX = 0f
-                                }
-                            }
-                        }
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.foundation.Image(
                         bitmap = bitmap!!.asImageBitmap(),
@@ -606,18 +814,31 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                         contentScale = ContentScale.FillWidth,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 24.dp)
                             .graphicsLayer {
-                                val totalScale = scale * animatedViewportScale.value
+                                val totalScale = animatedViewportScale.value
                                 scaleX = totalScale
                                 scaleY = totalScale
-                                translationX = offsetX
                             }
                     )
                 }
             } else if (hasError) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.fillMaxWidth().height(400.dp).background(Color.White).padding(8.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Erro ao carregar renderização", color = Color.Red)
+                        Icon(Icons.Default.Info, contentDescription = "Error", tint = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Erro ao carregar renderização da pág. ${page + 1}", color = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val scrState = androidx.compose.foundation.rememberScrollState()
+                        Text(
+                            text = errorReport,
+                            color = Color.Red,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(scrState)
+                        )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(onClick = { retryKey++ }) {
                             Text("Tentar Novamente")

@@ -51,6 +51,7 @@ fun LibraryScreen(
     
     var isSearchActive by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
+    var documentToDelete by remember { mutableStateOf<Manuscript?>(null) }
     val displayList = if (searchQuery.isNotBlank()) searchResults else manuscripts
 
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -211,12 +212,36 @@ fun LibraryScreen(
                     ) { manuscript ->
                         ManuscriptCard(
                             manuscript = manuscript,
-                            onClick = { onNavigateToReader(manuscript.id) }
+                            onClick = { onNavigateToReader(manuscript.id) },
+                            onDelete = { documentToDelete = manuscript }
                         )
                     }
                 }
             }
         }
+    }
+    
+    documentToDelete?.let { manuscript ->
+        AlertDialog(
+            onDismissRequest = { documentToDelete = null },
+            title = { Text("Excluir este documento?") },
+            text = { Text("A remoção da partitura \"${manuscript.title}\" será definitiva. O arquivo físico será apagado.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteDocument(context, manuscript)
+                        documentToDelete = null
+                    }
+                ) {
+                    Text("Excluir", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { documentToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
     
     if (showStats) {
@@ -235,7 +260,7 @@ fun LibraryScreen(
                             Text("${manuscripts.size} partituras", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                         }
                     }
-                    Divider()
+                    HorizontalDivider()
                     Text("Mais tocadas (Últimos 30 dias)", style = MaterialTheme.typography.titleSmall)
                     if (manuscripts.isNotEmpty()) {
                         manuscripts.take(3).forEachIndexed { index, ms ->
@@ -301,8 +326,11 @@ fun BottomLibraryNav(
 @Composable
 fun ManuscriptCard(
     manuscript: Manuscript,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDelete: () -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .clickable { onClick() }
@@ -344,19 +372,49 @@ fun ManuscriptCard(
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        Text(
-            text = manuscript.title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = "${manuscript.category} · ${manuscript.era.ifEmpty { manuscript.composer }}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = manuscript.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${manuscript.category} · ${manuscript.era.ifEmpty { manuscript.composer }}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            
+            Box {
+                IconButton(onClick = { expanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Mais opções")
+                }
+                
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Excluir", color = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            expanded = false
+                            onDelete()
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        }
+                    )
+                }
+            }
+        }
     }
 }
