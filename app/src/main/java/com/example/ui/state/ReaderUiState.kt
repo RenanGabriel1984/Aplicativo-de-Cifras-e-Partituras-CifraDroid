@@ -18,15 +18,15 @@ class ReaderUiState(
     isStageModeInitial: Boolean = false,
     isChoirModeInitial: Boolean = false,
     autoScrollSpeedInitial: Float = 0f,
-    liturgicalThemeInitial: LiturgicalTheme = LiturgicalTheme.CLASSIC,
-    isPerformanceModeInitial: Boolean = false
+    liturgicalThemeInitial: LiturgicalTheme = LiturgicalTheme.CLASSIC
 ) {
     var showHud by mutableStateOf(showHudInitial)
     var isStageMode by mutableStateOf(isStageModeInitial)
     var isChoirMode by mutableStateOf(isChoirModeInitial)
     var autoScrollSpeed by mutableFloatStateOf(autoScrollSpeedInitial)
     var liturgicalTheme by mutableStateOf(liturgicalThemeInitial)
-    var isPerformanceMode by mutableStateOf(isPerformanceModeInitial)
+    var showMusicList by mutableStateOf(false)
+    var selectedSongChartId by mutableStateOf<Int?>(null)
     
     var isLoading by mutableStateOf(false)
     var localDocument by mutableStateOf<DocumentContent?>(null)
@@ -40,7 +40,7 @@ class ReaderUiState(
                     "isChoirMode" to it.isChoirMode,
                     "autoScrollSpeed" to it.autoScrollSpeed,
                     "liturgicalTheme" to it.liturgicalTheme.name,
-                    "isPerformanceMode" to it.isPerformanceMode
+                    "showMusicList" to it.showMusicList
                 )
             },
             restore = {
@@ -49,9 +49,10 @@ class ReaderUiState(
                     isStageModeInitial = it["isStageMode"] as Boolean,
                     isChoirModeInitial = it["isChoirMode"] as Boolean,
                     autoScrollSpeedInitial = it["autoScrollSpeed"] as Float,
-                    liturgicalThemeInitial = LiturgicalTheme.valueOf(it["liturgicalTheme"] as String),
-                    isPerformanceModeInitial = it["isPerformanceMode"] as? Boolean ?: false
-                )
+                    liturgicalThemeInitial = LiturgicalTheme.valueOf(it["liturgicalTheme"] as String)
+                ).apply {
+                    showMusicList = it["showMusicList"] as? Boolean ?: false
+                }
             }
         )
     }

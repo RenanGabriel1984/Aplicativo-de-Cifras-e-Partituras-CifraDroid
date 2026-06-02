@@ -169,11 +169,7 @@ fun ReaderScreen(
 
     val attemptNextPageOrNextSong = {
         view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        if (uiState.isPerformanceMode) {
-            // Let the built-in system handle it when in Performance Mode by interacting with the list. 
-            // Wait, we can animate the scroll state. But I don't have perfScrollState here.
-        }
-        if (!uiState.isPerformanceMode && pagerState.currentPage < pageCount - 1) {
+        if (pagerState.currentPage < pageCount - 1) {
             coroutineScope.launch { 
                 pagerState.animateScrollToPage(
                     pagerState.currentPage + 1,
@@ -194,10 +190,7 @@ fun ReaderScreen(
     
     val attemptPrevPageOrPrevSong = {
         view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-        if (uiState.isPerformanceMode) {
-            // System will handle the scroll since it's focused, or we can handle it
-        }
-        if (!uiState.isPerformanceMode && pagerState.currentPage > 0) {
+        if (pagerState.currentPage > 0) {
             coroutineScope.launch { 
                 pagerState.animateScrollToPage(
                     pagerState.currentPage - 1,
@@ -302,14 +295,6 @@ fun ReaderScreen(
     }
 
     val currentManuscript = manuscript
-    var showTransposePanel by remember { mutableStateOf(false) }
-    
-    val storedPref by viewModel.getPreferredKey(manuscriptId).collectAsStateWithLifecycle(null)
-    val defaultKey = if (currentManuscript?.keySignature.isNullOrBlank()) {
-        if (currentManuscript?.tone.isNullOrBlank()) "C" else currentManuscript!!.tone
-    } else currentManuscript!!.keySignature
-    
-    val currentKey = storedPref?.preferredKey?.takeIf { it.isNotBlank() } ?: defaultKey
 
     if (currentManuscript != null) {
         LaunchedEffect(Unit) {
@@ -334,7 +319,7 @@ fun ReaderScreen(
                 .focusRequester(focusRequester)
                 .focusable()
                 .onKeyEvent { keyEvent ->
-                    if (uiState.isPerformanceMode) {
+                    if (uiState.showMusicList || uiState.selectedSongChartId != null) {
                         return@onKeyEvent false
                     }
                     when (keyEvent.key) {
@@ -362,136 +347,22 @@ fun ReaderScreen(
                     }
                 }
         ) {
-            Column(modifier = Modifier.fillMaxSize().background(if (uiState.isPerformanceMode) Color.Black else Color.Transparent)) {
+            Column(modifier = Modifier.fillMaxSize().background(if (uiState.showMusicList) Color.Black else Color.Transparent)) {
                 Box(modifier = Modifier.weight(1f)) {
-                    if (uiState.isPerformanceMode) {
-                        val pdfContent by viewModel.getPdfText(manuscriptId).collectAsStateWithLifecycle(null)
-                        val rawText = pdfContent?.content ?: currentManuscript?.extractedText ?: ""
-                        if (rawText.isBlank()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("Este PDF não possui texto selecionável e não pode utilizar o Modo Performance.", 
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(32.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
+                    if (uiState.selectedSongChartId != null) {
+                        SongChartScreen(
+                            songChartId = uiState.selectedSongChartId!!,
+                            viewModel = viewModel,
+                            onBack = { uiState.selectedSongChartId = null }
+                        )
+                    } else if (uiState.showMusicList) {
+                        SongListScreen(
+                            manuscriptId = manuscriptId,
+                            viewModel = viewModel,
+                            onSongChartSelected = { selectedId ->
+                                uiState.selectedSongChartId = selectedId
                             }
-                        } else {
-                            val prefs = context.getSharedPreferences("performance_prefs", Context.MODE_PRIVATE)
-                            var fontSizeMultiplier by remember { mutableFloatStateOf(prefs.getFloat("font_size_$manuscriptId", 1.5f)) }
-                            val transposedText = remember(rawText, defaultKey, currentKey) {
-                                val stepsForText = com.example.util.ChordTransposer.getStepsBetween(defaultKey, currentKey)
-                                val isFlatsText = currentKey.contains("b") || currentKey == "F"
-                                if (stepsForText == 0) rawText else com.example.util.ChordTransposer.transposeText(rawText, stepsForText, isFlatsText)
-                            }
-                            
-                            val perfScrollState = androidx.compose.foundation.lazy.rememberLazyListState()
-                            
-                            // Auto scroll for performance mode
-                            LaunchedEffect(autoScrollSpeed) {
-                                if (autoScrollSpeed > 0f) {
-                                    while (true) {
-                                        kotlinx.coroutines.delay((1000 / autoScrollSpeed).toLong().coerceAtLeast(100L))
-                                        perfScrollState.animateScrollBy(50f)
-                                    }
-                                }
-                            }
-                            
-                            Box(modifier = Modifier.fillMaxSize().pointerInput(isStageMode) {
-                                detectTapGestures(
-                                    onTap = { offset ->
-                                        if (!isStageMode) {
-                                            val width = size.width
-                                            val x = offset.x
-                                            val leftBoundary = width * 0.3f
-                                            val rightBoundary = width * 0.7f
-                                            val viewportHeight = size.height
-                                            coroutineScope.launch {
-                                                if (x < leftBoundary) {
-                                                    perfScrollState.animateScrollBy(-(viewportHeight * 0.8).toFloat())
-                                                } else if (x > rightBoundary) {
-                                                    perfScrollState.animateScrollBy((viewportHeight * 0.8).toFloat())
-                                                } else {
-                                                    toggleHud()
-                                                    hudInteractionTime = System.currentTimeMillis()
-                                                }
-                                            }
-                                        }
-                                    }
-                                )
-                            }) {
-                                val lines = remember(transposedText) { transposedText.split("\n") }
-                                androidx.compose.foundation.lazy.LazyColumn(state = perfScrollState, modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                                    item {
-                                        Column(modifier = Modifier.fillMaxWidth().background(Color.DarkGray).padding(8.dp)) {
-                                            Text("TELEMETRIA (Diagnóstico)", color=Color.Yellow, fontWeight=androidx.compose.ui.text.font.FontWeight.Bold)
-                                            Text("Caracteres Extraídos: ${rawText.length}", color=Color.White, fontSize=12.sp)
-                                            Text("Linhas: ${lines.size}", color=Color.White, fontSize=12.sp)
-                                            Text("Primeiras 10 linhas originais (s/ transp):", color=Color.Cyan, fontSize=12.sp)
-                                            val top10 = rawText.lines().take(10).joinToString("\n")
-                                            Text(top10, color=Color.White, fontSize=12.sp, fontFamily=androidx.compose.ui.text.font.FontFamily.Monospace)
-                                        }
-                                    }
-                                    
-                                    if (uiState.showHud) {
-                                        item {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text("Tamanho da Fonte:", color = Color.White)
-                                                Row {
-                                                    listOf(1.0f, 1.25f, 1.5f, 1.75f, 2.0f).forEach { mult ->
-                                                        val isSelected = fontSizeMultiplier == mult
-                                                        Surface(
-                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.DarkGray,
-                                                            shape = RoundedCornerShape(8.dp),
-                                                            modifier = Modifier.padding(end = 4.dp).clickable {
-                                                                fontSizeMultiplier = mult
-                                                                prefs.edit().putFloat("font_size_$manuscriptId", mult).apply()
-                                                            }
-                                                        ) {
-                                                            Text("${(mult * 100).toInt()}%", color = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    val chordColor = androidx.compose.ui.graphics.Color(0xFF64B5F6) // Light Blue 300
-                                    
-                                    items(lines.size) { idx ->
-                                        val lineText = lines[idx]
-                                        val annotatedString = remember(lineText) {
-                                            androidx.compose.ui.text.buildAnnotatedString {
-                                                var lastIndex = 0
-                                                val chordRegex = Regex("\\b[A-G](?:#|b)?(?:m|maj|min|aug|dim)?(?:[0-9])?(?:sus[24])?(?:/[A-G](?:#|b)?)?\\b")
-                                                for (match in chordRegex.findAll(lineText)) {
-                                                    append(lineText.substring(lastIndex, match.range.first))
-                                                    withStyle(style = androidx.compose.ui.text.SpanStyle(color = chordColor, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)) {
-                                                        append(match.value)
-                                                    }
-                                                    lastIndex = match.range.last + 1
-                                                }
-                                                append(lineText.substring(lastIndex))
-                                            }
-                                        }
-                                        
-                                        Text(
-                                            text = annotatedString,
-                                            color = Color.White,
-                                            style = androidx.compose.ui.text.TextStyle(
-                                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                                fontSize = (14 * fontSizeMultiplier).sp,
-                                                lineHeight = (22 * fontSizeMultiplier).sp
-                                            ),
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        )
                     } else {
                         // Pager allows smooth transitions and intelligent 'beyondBoundsPageCount' preloads 1 page ahead/behind
                         if (isVerticalScroll) {
@@ -621,22 +492,6 @@ fun ReaderScreen(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(if (uiState.isPerformanceMode) "Desativar Modo Performance" else "Modo Performance") },
-                                        onClick = {
-                                            uiState.isPerformanceMode = !uiState.isPerformanceMode
-                                            uiState.showHud = false
-                                            showMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Transposição...") },
-                                        onClick = {
-                                            showTransposePanel = true
-                                            showMenu = false
-                                            uiState.showHud = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
                                         text = { Text("Configurações Gerais...") },
                                         onClick = {
                                             showMenu = false
@@ -657,6 +512,26 @@ fun ReaderScreen(
                             .padding(bottom = 32.dp)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            @OptIn(ExperimentalMaterial3Api::class)
+                            SingleChoiceSegmentedButtonRow(modifier = Modifier.padding(top = 8.dp, start=16.dp, end=16.dp)) {
+                                SegmentedButton(
+                                    selected = !uiState.showMusicList,
+                                    onClick = { 
+                                        uiState.showMusicList = false
+                                        uiState.selectedSongChartId = null
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                                ) {
+                                    Text("PDF")
+                                }
+                                SegmentedButton(
+                                    selected = uiState.showMusicList,
+                                    onClick = { uiState.showMusicList = true },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                                ) {
+                                    Text("MÚSICAS")
+                                }
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -683,73 +558,73 @@ fun ReaderScreen(
                     }
                 }
             }
-            
-            if (showTransposePanel) {
-                var localSelectedKey by remember { mutableStateOf(currentKey) }
-
-                @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-                androidx.compose.material3.ModalBottomSheet(
-                    onDismissRequest = { showTransposePanel = false },
-                    sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally, 
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 24.dp)
-                    ) {
-                        Text("Transposição", style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Tom Original", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(defaultKey, style = MaterialTheme.typography.headlineMedium)
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Tom Selecionado", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(localSelectedKey, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
-                            Button(onClick = {
-                                localSelectedKey = com.example.util.ChordTransposer.transposeText(localSelectedKey, -1, useFlats = true)
-                            }) {
-                                Text("-1")
-                            }
-                            Button(onClick = {
-                                localSelectedKey = com.example.util.ChordTransposer.transposeText(localSelectedKey, 1, useFlats = false)
-                            }) {
-                                Text("+1")
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(32.dp))
-                        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
-                            TextButton(onClick = { 
-                                showTransposePanel = false
-                            }) {
-                                Text("Cancelar")
-                            }
-                            Button(onClick = {
-                                viewModel.savePreferredKey(manuscriptId, localSelectedKey)
-                                showTransposePanel = false
-                            }) {
-                                Text("Aplicar")
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
-            }
         } // Close Box
         } // Close else if (!isLoading)
     } else {
         // Loading State
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+fun SongListScreen(
+    manuscriptId: Int,
+    viewModel: MainViewModel,
+    onSongChartSelected: (Int) -> Unit
+) {
+    val songCharts by viewModel.getSongCharts(manuscriptId).collectAsStateWithLifecycle(emptyList())
+
+    if (songCharts.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Nenhuma música encontrada.", color = MaterialTheme.colorScheme.onSurface)
+        }
+        return
+    }
+
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(
+            count = songCharts.size,
+            key = { index -> songCharts[index].id }
+        ) { index ->
+            val chart = songCharts[index]
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSongChartSelected(chart.id) },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = chart.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val key = chart.savedKey ?: chart.originalKey
+                    if (key.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = "Tom: $key",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

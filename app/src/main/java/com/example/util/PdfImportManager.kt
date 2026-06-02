@@ -44,7 +44,7 @@ object PdfImportManager {
                     ?: return@withTimeoutOrNull null
 
                 val coverPath = generateThumbnail(context, destinationFile)
-                val extractedText = PdfTextExtractor.extractText(destinationFile)
+                val extractedText = PdfTextExtractor.extractText(context, destinationFile)
 
                 Manuscript(
                     title = title,

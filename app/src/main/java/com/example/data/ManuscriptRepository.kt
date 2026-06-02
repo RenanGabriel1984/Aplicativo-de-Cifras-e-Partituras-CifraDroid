@@ -6,7 +6,8 @@ class ManuscriptRepository(
     private val manuscriptDao: ManuscriptDao, 
     private val repertoireDao: RepertoireDao,
     private val transpositionDao: TranspositionDao,
-    private val pdfTextContentDao: PdfTextContentDao
+    private val pdfTextContentDao: PdfTextContentDao,
+    private val songChartDao: SongChartDao
 ) {
     val allManuscripts: Flow<List<Manuscript>> = manuscriptDao.getAllManuscripts()
     val favoriteManuscripts: Flow<List<Manuscript>> = manuscriptDao.getFavorites()
@@ -29,6 +30,18 @@ class ManuscriptRepository(
 
     suspend fun toggleFavorite(manuscript: Manuscript) {
         manuscriptDao.updateManuscript(manuscript.copy(isFavorite = !manuscript.isFavorite))
+    }
+
+    fun getSongCharts(manuscriptId: Int) = songChartDao.getByManuscriptId(manuscriptId)
+
+    fun getSongChartById(songChartId: Int) = songChartDao.getById(songChartId)
+
+    suspend fun saveSongCharts(songCharts: List<SongChart>) {
+        songChartDao.insertAll(songCharts)
+    }
+
+    suspend fun updateSongChartKey(songChartId: Int, newKey: String) {
+        songChartDao.updateSavedKey(songChartId, newKey)
     }
 
     suspend fun delete(manuscript: Manuscript) {

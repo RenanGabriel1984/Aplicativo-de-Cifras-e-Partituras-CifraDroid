@@ -114,6 +114,8 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
                 val id = repository.insert(manuscript)
                 if (manuscript.extractedText.isNotEmpty()) {
                     repository.savePdfText(com.example.data.PdfTextContent(id.toInt(), manuscript.extractedText))
+                    val charts = com.example.util.SongChartParser.parse(id.toInt(), manuscript.extractedText)
+                    repository.saveSongCharts(charts)
                 }
             }
         }
@@ -129,6 +131,16 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
     fun getRepertoire(id: Int) = repository.getRepertoire(id)
 
     fun getPdfText(manuscriptId: Int) = repository.getPdfText(manuscriptId)
+
+    fun getSongCharts(manuscriptId: Int) = repository.getSongCharts(manuscriptId)
+
+    fun getSongChartById(songChartId: Int) = repository.getSongChartById(songChartId)
+
+    fun updateSongChartKey(songChartId: Int, newKey: String) {
+        viewModelScope.launch {
+            repository.updateSongChartKey(songChartId, newKey)
+        }
+    }
 
     suspend fun getTransposedContent(manuscriptId: Int, steps: Int, useFlats: Boolean): String {
         val pdfText = repository.getPdfText(manuscriptId).first()
