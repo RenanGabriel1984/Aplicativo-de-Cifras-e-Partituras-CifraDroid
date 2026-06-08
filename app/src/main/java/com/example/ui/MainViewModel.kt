@@ -111,12 +111,17 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
         viewModelScope.launch {
             val manuscript = com.example.util.PdfImportManager.importFromUri(context, uri)
             if (manuscript != null) {
+                val charts = com.example.util.SongChartParser.parse(0, manuscript.extractedText)
+                if (charts.isEmpty()) {
+                    android.widget.Toast.makeText(context, "Falha ao segmentar músicas do PDF", android.widget.Toast.LENGTH_LONG).show()
+                    return@launch
+                }
                 val id = repository.insert(manuscript)
                 if (manuscript.extractedText.isNotEmpty()) {
                     repository.savePdfText(com.example.data.PdfTextContent(id.toInt(), manuscript.extractedText))
-                    val charts = com.example.util.SongChartParser.parse(id.toInt(), manuscript.extractedText)
-                    repository.saveSongCharts(charts)
                 }
+                val finalCharts = charts.map { it.copy(manuscriptId = id.toInt()) }
+                repository.saveSongCharts(finalCharts)
             }
         }
     }

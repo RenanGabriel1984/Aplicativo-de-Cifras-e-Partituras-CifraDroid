@@ -349,7 +349,13 @@ fun ReaderScreen(
         ) {
             Column(modifier = Modifier.fillMaxSize().background(if (uiState.showMusicList) Color.Black else Color.Transparent)) {
                 Box(modifier = Modifier.weight(1f)) {
-                    if (uiState.selectedSongChartId != null) {
+                    if (uiState.showImportDiagnostic) {
+                        DiagnosticScreen(
+                            manuscriptId = manuscriptId,
+                            viewModel = viewModel,
+                            onBack = { uiState.showImportDiagnostic = false }
+                        )
+                    } else if (uiState.selectedSongChartId != null) {
                         SongChartScreen(
                             songChartId = uiState.selectedSongChartId!!,
                             viewModel = viewModel,
@@ -496,6 +502,13 @@ fun ReaderScreen(
                                         onClick = {
                                             showMenu = false
                                             onNavigateToSettings()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Diagnóstico da Importação") },
+                                        onClick = {
+                                            showMenu = false
+                                            uiState.showImportDiagnostic = true
                                         }
                                     )
                                 }

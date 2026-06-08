@@ -27,6 +27,7 @@ class ReaderUiState(
     var liturgicalTheme by mutableStateOf(liturgicalThemeInitial)
     var showMusicList by mutableStateOf(false)
     var selectedSongChartId by mutableStateOf<Int?>(null)
+    var showImportDiagnostic by mutableStateOf(false)
     
     var isLoading by mutableStateOf(false)
     var localDocument by mutableStateOf<DocumentContent?>(null)
