@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -150,6 +151,10 @@ fun ReaderScreen(
     val pagerState = rememberPagerState(pageCount = { pageCount })
     val coroutineScope = rememberCoroutineScope()
     
+    var topBarHeight by remember { mutableStateOf(0.dp) }
+    var bottomBarHeight by remember { mutableStateOf(0.dp) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
     val view = androidx.compose.ui.platform.LocalView.current
     val window = (context as? android.app.Activity)?.window
 
@@ -242,8 +247,18 @@ fun ReaderScreen(
     var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
     var hudInteractionTime by remember { mutableLongStateOf(0L) }
     
-    androidx.activity.compose.BackHandler(enabled = uiState.showHud) {
-        uiState.showHud = false
+    androidx.activity.compose.BackHandler(
+        enabled = uiState.showHud || uiState.showMusicList || uiState.selectedSongChartId != null || uiState.showImportDiagnostic
+    ) {
+        if (uiState.showImportDiagnostic) {
+            uiState.showImportDiagnostic = false
+        } else if (uiState.selectedSongChartId != null) {
+            uiState.selectedSongChartId = null
+        } else if (uiState.showMusicList) {
+            uiState.showMusicList = false
+        } else if (uiState.showHud) {
+            uiState.showHud = false
+        }
     }
     
     // Auto-hide HUD natively
@@ -364,9 +379,12 @@ fun ReaderScreen(
                     } else if (uiState.showMusicList) {
                         SongListScreen(
                             manuscriptId = manuscriptId,
+                            topBarHeight = topBarHeight,
+                            bottomBarHeight = bottomBarHeight,
                             viewModel = viewModel,
                             onSongChartSelected = { selectedId ->
                                 uiState.selectedSongChartId = selectedId
+                                uiState.showHud = false
                             }
                         )
                     } else {
@@ -407,7 +425,9 @@ fun ReaderScreen(
                     // Top Bar
                     Surface(
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                        modifier = Modifier.align(Alignment.TopCenter)
+                        modifier = Modifier.align(Alignment.TopCenter).onGloballyPositioned { coordinates ->
+                            topBarHeight = with(density) { coordinates.size.height.toDp() }
+                        }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -523,6 +543,9 @@ fun ReaderScreen(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 32.dp)
+                            .onGloballyPositioned { coordinates ->
+                                bottomBarHeight = with(density) { coordinates.size.height.toDp() } + 32.dp
+                            }
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             @OptIn(ExperimentalMaterial3Api::class)
@@ -584,26 +607,38 @@ fun ReaderScreen(
 @Composable
 fun SongListScreen(
     manuscriptId: Int,
+    topBarHeight: androidx.compose.ui.unit.Dp,
+    bottomBarHeight: androidx.compose.ui.unit.Dp,
     viewModel: MainViewModel,
     onSongChartSelected: (Int) -> Unit
 ) {
     val songCharts by viewModel.getSongCharts(manuscriptId).collectAsStateWithLifecycle(emptyList())
 
-    if (songCharts.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Nenhuma música encontrada.", color = MaterialTheme.colorScheme.onSurface)
+    androidx.compose.material3.Scaffold(
+        containerColor = Color.Transparent
+    ) { innerPadding ->
+        if (songCharts.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
+                Text("Nenhuma música encontrada.", color = MaterialTheme.colorScheme.onSurface)
+            }
+            return@Scaffold
         }
-        return
-    }
 
-    androidx.compose.foundation.lazy.LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        items(
-            count = songCharts.size,
-            key = { index -> songCharts[index].id }
-        ) { index ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                // Use measured heights. Add extra padding so items aren't completely flush with bars.
+                top = topBarHeight + 16.dp, 
+                bottom = bottomBarHeight + 16.dp, 
+                start = 16.dp,
+                end = 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                count = songCharts.size,
+                key = { index -> songCharts[index].id }
+            ) { index ->
             val chart = songCharts[index]
             Surface(
                 modifier = Modifier
@@ -620,24 +655,39 @@ fun SongListScreen(
                     Text(
                         text = chart.title,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(end = 16.dp)
                     )
                     val key = chart.savedKey ?: chart.originalKey
                     if (key.isNotBlank()) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = "Tom: $key",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val isTransposed = chart.savedKey != null && chart.savedKey != chart.originalKey
+                            if (isTransposed) {
+                                Text(
+                                    "● Transposto", 
+                                    color = MaterialTheme.colorScheme.primary, 
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                            }
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Tom: $key",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
         }
     }
 }

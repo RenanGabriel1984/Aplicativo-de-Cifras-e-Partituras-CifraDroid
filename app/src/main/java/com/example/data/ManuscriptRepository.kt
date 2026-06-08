@@ -40,7 +40,7 @@ class ManuscriptRepository(
         songChartDao.insertAll(songCharts)
     }
 
-    suspend fun updateSongChartKey(songChartId: Int, newKey: String) {
+    suspend fun updateSongChartKey(songChartId: Int, newKey: String?) {
         songChartDao.updateSavedKey(songChartId, newKey)
     }
 

@@ -21,5 +21,5 @@ interface SongChartDao {
     fun getById(songChartId: Int): Flow<SongChart?>
 
     @Query("UPDATE song_charts SET savedKey = :newKey WHERE id = :songChartId")
-    suspend fun updateSavedKey(songChartId: Int, newKey: String)
+    suspend fun updateSavedKey(songChartId: Int, newKey: String?)
 }

@@ -141,7 +141,7 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
 
     fun getSongChartById(songChartId: Int) = repository.getSongChartById(songChartId)
 
-    fun updateSongChartKey(songChartId: Int, newKey: String) {
+    fun updateSongChartKey(songChartId: Int, newKey: String?) {
         viewModelScope.launch {
             repository.updateSongChartKey(songChartId, newKey)
         }

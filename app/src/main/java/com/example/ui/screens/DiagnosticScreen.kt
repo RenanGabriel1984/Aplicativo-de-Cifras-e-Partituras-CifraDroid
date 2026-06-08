@@ -48,15 +48,15 @@ fun DiagnosticScreen(
                 Text("Total de caracteres extraídos: ${ms.extractedText.length}", style = MaterialTheme.typography.bodyLarge)
                 val lines = ms.extractedText.split("\n")
                 Text("Total de linhas: ${lines.size}", style = MaterialTheme.typography.bodyLarge)
-                Text("Total de títulos detectados: ${songCharts.size}", style = MaterialTheme.typography.bodyLarge)
-                Text("Total de SongCharts gerados: ${songCharts.size}", style = MaterialTheme.typography.bodyLarge)
+                Text("Cabeçalhos litúrgicos detectados: ${songCharts.size}", style = MaterialTheme.typography.bodyLarge)
+                Text("Quantidade de blocos gerados: ${songCharts.size}", style = MaterialTheme.typography.bodyLarge)
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 Text("Segmentação realizada:", style = MaterialTheme.typography.titleMedium)
                 Text(if (songCharts.size > 1) "SIM" else "NÃO", style = MaterialTheme.typography.bodyLarge)
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text("Títulos Detectados:", style = MaterialTheme.typography.titleMedium)
+                Text("Cabeçalhos litúrgicos detectados:", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(8.dp))
                 songCharts.forEachIndexed { index, chart ->
                     Text("${index + 1}. ${chart.title}", style = MaterialTheme.typography.bodyLarge)

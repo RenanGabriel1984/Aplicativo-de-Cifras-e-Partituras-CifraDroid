@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -55,31 +56,83 @@ fun SongChartScreen(
     
     val scrollState = androidx.compose.foundation.lazy.rememberLazyListState()
 
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        Box(modifier = Modifier.fillMaxWidth().background(Color(0xFF1E1E1E)).padding(horizontal = 4.dp, vertical = 8.dp)) {
-             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                 Row(verticalAlignment = Alignment.CenterVertically) {
-                     IconButton(onClick = onBack) {
-                         Icon(Icons.Default.ChevronLeft, contentDescription = "Voltar", tint = Color.White)
-                     }
-                     Text(chart.title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                 }
-                 Row(verticalAlignment = Alignment.CenterVertically) {
-                     IconButton(onClick = { 
-                         val nextKey = ChordTransposer.transposeText(currentKey, -1, useFlats = true)
-                         viewModel.updateSongChartKey(chart.id, nextKey)
-                     }) {
-                         Text("-", color = Color.White, fontSize = 24.sp)
-                     }
-                     Text(currentKey, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp))
-                     IconButton(onClick = { 
-                         val nextKey = ChordTransposer.transposeText(currentKey, 1, useFlats = false)
-                         viewModel.updateSongChartKey(chart.id, nextKey)
-                     }) {
-                         Text("+", color = Color.White, fontSize = 24.sp)
-                     }
-                 }
-             }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF1E1E1E))
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            // Voltar Button
+            androidx.compose.material3.TextButton(
+                onClick = onBack,
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Icon(Icons.Default.ChevronLeft, contentDescription = "Voltar", tint = MaterialTheme.colorScheme.primary)
+                Text("Voltar para Músicas", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Title
+            Text(
+                text = chart.title, 
+                color = Color.White, 
+                style = MaterialTheme.typography.titleLarge
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Transposition Controls
+            Row(
+                verticalAlignment = Alignment.CenterVertically, 
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val isTransposed = chart.savedKey != null && chart.savedKey != chart.originalKey
+
+                Column {
+                    if (isTransposed) {
+                        Text("Original: ${chart.originalKey}", color = Color.Gray, fontSize = 12.sp)
+                        Text("Atual: $currentKey", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    } else {
+                        Text("Tom: $currentKey", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isTransposed) {
+                        androidx.compose.material3.TextButton(onClick = { 
+                            viewModel.updateSongChartKey(chart.id, null)
+                            android.widget.Toast.makeText(context, "Tom original restaurado", android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("Restaurar", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    
+                    IconButton(onClick = { 
+                        val nextKey = com.example.util.ChordTransposer.transposeText(currentKey, -1, useFlats = true)
+                        viewModel.updateSongChartKey(chart.id, nextKey)
+                        android.widget.Toast.makeText(context, "Tom salvo", android.widget.Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("-", color = Color.White, fontSize = 28.sp)
+                    }
+                    
+                    IconButton(onClick = { 
+                        val nextKey = com.example.util.ChordTransposer.transposeText(currentKey, 1, useFlats = false)
+                        viewModel.updateSongChartKey(chart.id, nextKey)
+                        android.widget.Toast.makeText(context, "Tom salvo", android.widget.Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("+", color = Color.White, fontSize = 24.sp)
+                    }
+                }
+            }
         }
 
         LazyColumn(state = scrollState, modifier = Modifier.fillMaxSize().padding(16.dp)) {
