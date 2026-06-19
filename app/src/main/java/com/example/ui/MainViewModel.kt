@@ -37,6 +37,13 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
             initialValue = emptyList()
         )
 
+    val allSongCharts: StateFlow<List<com.example.data.SongChart>> = repository.getAllSongCharts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     val favoriteManuscripts: StateFlow<List<Manuscript>> = repository.favoriteManuscripts
         .stateIn(
             scope = viewModelScope,
@@ -113,8 +120,10 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
             if (manuscript != null) {
                 val charts = com.example.util.SongChartParser.parse(0, manuscript.extractedText)
                 if (charts.isEmpty()) {
-                    android.widget.Toast.makeText(context, "Falha ao segmentar músicas do PDF", android.widget.Toast.LENGTH_LONG).show()
-                    return@launch
+                    android.util.Log.d("ImportDocument", "No charts parsed. Treating as Graphical PDF/Partitura.")
+                    android.widget.Toast.makeText(context, "Músicas não detectadas. Documento salvo como Partitura.", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    android.widget.Toast.makeText(context, "${charts.size} músicas importadas com sucesso.", android.widget.Toast.LENGTH_SHORT).show()
                 }
                 val id = repository.insert(manuscript)
                 if (manuscript.extractedText.isNotEmpty()) {
@@ -133,6 +142,24 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
         return repository.getById(id)
     }
 
+    val allRepertoires = repository.getAllRepertoires()
+
+    fun insertRepertoire(repertoire: com.example.data.Repertoire) {
+        viewModelScope.launch {
+            repository.insertRepertoire(repertoire)
+        }
+    }
+
+    suspend fun insertImportedRepertoire(repertoire: com.example.data.Repertoire, importedSongs: List<com.example.data.RepertoireSong>): Long {
+        return repository.insertImportedRepertoire(repertoire, importedSongs)
+    }
+
+    fun deleteRepertoire(id: Int) {
+        viewModelScope.launch {
+            repository.deleteRepertoire(id)
+        }
+    }
+
     fun getRepertoire(id: Int) = repository.getRepertoire(id)
 
     fun getPdfText(manuscriptId: Int) = repository.getPdfText(manuscriptId)
@@ -146,6 +173,18 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
             repository.updateSongChartKey(songChartId, newKey)
         }
     }
+
+    fun updateRepertoireSongKey(repertoireSongId: Int, newKey: String?) {
+        viewModelScope.launch {
+            repository.updateRepertoireSongKey(repertoireSongId, newKey)
+        }
+    }
+
+    fun getRepertoireSongById(id: Int) = repository.getRepertoireSongById(id)
+
+    fun getSongsForRepertoire(repertoireId: Int) = repository.getSongsForRepertoire(repertoireId)
+
+    fun findRepertoireSong(repertoireId: Int, songChartId: Int) = repository.findRepertoireSong(repertoireId, songChartId)
 
     suspend fun getTransposedContent(manuscriptId: Int, steps: Int, useFlats: Boolean): String {
         val pdfText = repository.getPdfText(manuscriptId).first()
@@ -162,6 +201,7 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
         }
     }
 
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     fun deleteDocument(context: android.content.Context, manuscript: Manuscript) {
         viewModelScope.launch {
             // Remove physical file
@@ -192,5 +232,13 @@ class MainViewModel(private val repository: ManuscriptRepository, val pedalManag
             // Remove from Room DB
             repository.delete(manuscript)
         }
+    }
+
+    suspend fun exportBackup(): String {
+        return repository.exportBackup()
+    }
+
+    suspend fun importBackup(jsonString: String) {
+        repository.importBackup(jsonString)
     }
 }

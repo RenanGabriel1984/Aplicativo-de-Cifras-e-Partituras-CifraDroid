@@ -31,7 +31,9 @@ class MainActivity : ComponentActivity() {
             database.repertoireDao(),
             database.transpositionDao(),
             database.pdfTextContentDao(),
-            database.songChartDao()
+            database.songChartDao(),
+            database.repertoireSongDao(),
+            database.repertoireCategoryDao()
         )
         pedalManager = PedalManager(applicationContext)
         

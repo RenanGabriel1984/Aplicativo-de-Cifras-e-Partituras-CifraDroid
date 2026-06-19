@@ -34,6 +34,12 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
                 },
                 onNavigateToMaestro = {
                     navController.navigate("maestro")
+                },
+                onNavigateToSettings = {
+                    navController.navigate("settings")
+                },
+                onNavigateToSetlists = {
+                    navController.navigate("setlists")
                 }
             )
         }
@@ -47,6 +53,58 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
         composable("maestro") {
             MaestroScreen(
                 onNavigateBack = { navController.popBackStack() }
+            )
+        }
+        composable("settings") {
+            com.example.ui.screens.SettingsScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToPedalSettings = { navController.navigate("pedal_settings") }
+            )
+        }
+        composable("setlists") {
+            com.example.ui.screens.RepertoiresScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToEditRepertoire = { id -> navController.navigate("edit_repertoire/$id") }
+            )
+        }
+        composable(
+            "edit_repertoire/{id}",
+            arguments = listOf(androidx.navigation.navArgument("id") { type = androidx.navigation.NavType.IntType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getInt("id") ?: return@composable
+            com.example.ui.screens.EditRepertoireScreen(
+                viewModel = viewModel,
+                repertoireId = id,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToReader = { msId, repId ->
+                    navController.navigate("song_chart/$msId?repertoireId=$repId")
+                }
+            )
+        }
+        composable(
+            "song_chart/{id}?repertoireId={repertoireId}",
+            arguments = listOf(
+                androidx.navigation.navArgument("id") { type = androidx.navigation.NavType.IntType },
+                androidx.navigation.navArgument("repertoireId") { 
+                    type = androidx.navigation.NavType.IntType
+                    defaultValue = -1 
+                }
+            )
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getInt("id") ?: return@composable
+            val repId = backStackEntry.arguments?.getInt("repertoireId") ?: -1
+            com.example.ui.screens.SongChartScreen(
+                songChartId = id,
+                repertoireId = if (repId != -1) repId else null,
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onNavigateToSongChart = { nextId ->
+                    navController.navigate("song_chart/$nextId?repertoireId=$repId") {
+                        popUpTo("edit_repertoire/$repId")
+                    }
+                }
             )
         }
         composable(
@@ -74,7 +132,7 @@ fun DigitalManuscriptApp(viewModel: MainViewModel) {
                     }
                 },
                 onNavigateToSettings = {
-                    navController.navigate("pedal_settings")
+                    navController.navigate("settings")
                 }
             )
         }

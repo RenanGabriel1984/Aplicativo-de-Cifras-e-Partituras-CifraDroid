@@ -17,6 +17,12 @@ interface RepertoireDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(repertoire: Repertoire): Long
     
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(repertoires: List<Repertoire>)
+
+    @Query("DELETE FROM repertoires")
+    suspend fun deleteAll()
+
     @Query("DELETE FROM repertoires WHERE id = :id")
     suspend fun delete(id: Int)
 }

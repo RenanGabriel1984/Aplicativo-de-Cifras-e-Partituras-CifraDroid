@@ -36,25 +36,59 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 
+import com.example.util.PreferencesManager
+import kotlinx.coroutines.launch
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     viewModel: MainViewModel,
     onNavigateToReader: (Int) -> Unit,
     onNavigateToPedalSettings: () -> Unit,
-    onNavigateToMaestro: () -> Unit
+    onNavigateToMaestro: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onNavigateToSetlists: () -> Unit
 ) {
     val manuscripts by viewModel.allManuscripts.collectAsStateWithLifecycle()
+    val allSongCharts by viewModel.allSongCharts.collectAsStateWithLifecycle()
+    val allRepertoires by viewModel.allRepertoires.collectAsStateWithLifecycle(emptyList())
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     
+    val prefsManager = remember { PreferencesManager(context) }
+    var favoriteSet by remember { mutableStateOf(prefsManager.getFavorites()) }
+    var recentList by remember { mutableStateOf(prefsManager.getRecent()) }
+
     var isSearchActive by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var documentToDelete by remember { mutableStateOf<Manuscript?>(null) }
     val displayList = if (searchQuery.isNotBlank()) searchResults else manuscripts
 
+    var showMenu by remember { mutableStateOf(false) }
+    var backupJsonToRestore by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+
+    val backupPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                coroutineScope.launch {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                            val json = inputStream.bufferedReader().use { it.readText() }
+                            backupJsonToRestore = json
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        android.widget.Toast.makeText(context, "Erro ao ler o arquivo de backup", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    )
 
     val documentPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -62,6 +96,24 @@ fun LibraryScreen(
             if (uri != null) {
                 viewModel.importDocument(context, uri)
                 android.widget.Toast.makeText(context, "Documento importado com sucesso!", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
+
+    var importResult by remember { mutableStateOf<com.example.util.ImportResult?>(null) }
+    
+    val importRepertoireLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                coroutineScope.launch {
+                    val result = com.example.util.RepertoireShareManager.importRepertoire(context, uri, allSongCharts)
+                    if (result != null) {
+                        importResult = result
+                    } else {
+                        android.widget.Toast.makeText(context, "Erro ao importar repertório ou formato inválido.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     )
@@ -104,10 +156,60 @@ fun LibraryScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                         }
                     } else {
-                        IconButton(onClick = { 
-                            android.widget.Toast.makeText(context, "Menu (Em desenvolvimento)", android.widget.Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu_desc))
+                        androidx.compose.foundation.layout.Box {
+                            IconButton(onClick = { showMenu = true }) {
+                                Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.menu_desc))
+                            }
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Exportar Backup") },
+                                    onClick = {
+                                        showMenu = false
+                                        coroutineScope.launch {
+                                            try {
+                                                val json = viewModel.exportBackup()
+                                                val backupDir = java.io.File(context.cacheDir, "backups")
+                                                if (!backupDir.exists()) backupDir.mkdirs()
+                                                val backupFile = java.io.File(backupDir, "cifradroid_backup.json")
+                                                backupFile.writeText(json)
+                                                
+                                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                                    context,
+                                                    "${context.packageName}.fileprovider",
+                                                    backupFile
+                                                )
+                                                
+                                                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                    type = "application/json"
+                                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartilhar Backup via..."))
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                android.widget.Toast.makeText(context, "Erro ao exportar backup", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Importar Backup") },
+                                    onClick = {
+                                        showMenu = false
+                                        backupPickerLauncher.launch(arrayOf("application/json", "*/*"))
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Importar Repertório") },
+                                    onClick = {
+                                        showMenu = false
+                                        importRepertoireLauncher.launch(arrayOf("application/json", "*/*"))
+                                    }
+                                )
+                            }
                         }
                     }
                 },
@@ -120,9 +222,7 @@ fun LibraryScreen(
                     IconButton(onClick = onNavigateToPedalSettings) {
                         Icon(Icons.Default.BluetoothConnected, contentDescription = stringResource(R.string.pedal_config_desc))
                     }
-                    IconButton(onClick = { 
-                        android.widget.Toast.makeText(context, "Configurações (Em desenvolvimento)", android.widget.Toast.LENGTH_SHORT).show()
-                    }) {
+                    IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_desc))
                     }
                 },
@@ -138,9 +238,7 @@ fun LibraryScreen(
             BottomLibraryNav(
                 onSearchClick = { isSearchActive = true },
                 onStatsClick = { showStats = true },
-                onSetlistsClick = {
-                    android.widget.Toast.makeText(context, "Em desenvolvimento", android.widget.Toast.LENGTH_SHORT).show()
-                },
+                onSetlistsClick = onNavigateToSetlists,
                 onMaestroClick = onNavigateToMaestro
             )
         },
@@ -156,10 +254,14 @@ fun LibraryScreen(
             )
         }
     ) { paddingValues ->
-        val categories = listOf("Últimos Utilizados", "Favoritos", "Missas", "Ensaios", "Repertórios", "Entrada", "Comunhão", "Final")
+        val categories = listOf("Todos os Documentos", "Favoritos", "Recentemente Abertos")
         var selectedCategory by remember { mutableStateOf(categories[0]) }
 
-        val filteredList = displayList.filter { selectedCategory == "Últimos Utilizados" || (selectedCategory == "Favoritos" && it.isFavorite) || (!it.isFavorite && selectedCategory != "Favoritos") }
+        val filteredList = when (selectedCategory) {
+            "Favoritos" -> displayList.filter { favoriteSet.contains(it.id.toString()) }
+            "Recentemente Abertos" -> displayList.filter { recentList.contains(it.id) }.sortedBy { recentList.indexOf(it.id) }
+            else -> displayList
+        }
 
         if (displayList.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
@@ -181,11 +283,185 @@ fun LibraryScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp)
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(categories) { category ->
+                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                        Text("🎵 Meu Resumo Musical", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+                        
+                        val totalMusicas by remember(allSongCharts) { androidx.compose.runtime.derivedStateOf { allSongCharts.size } }
+                        val totalRepertorios by remember(allRepertoires) { androidx.compose.runtime.derivedStateOf { allRepertoires.size } }
+                        val favSet = prefsManager.getFavoriteSongs()
+                        val totalFavoritas by remember(favSet) { androidx.compose.runtime.derivedStateOf { favSet.size } }
+                        
+                        val mostPlayed = remember { prefsManager.getMostPlayedSongs(Int.MAX_VALUE) }
+                        val topSongInfo = mostPlayed.firstOrNull()
+                        val maisTocadaNome by remember(mostPlayed, allSongCharts) { 
+                            androidx.compose.runtime.derivedStateOf { topSongInfo?.first?.let { id -> allSongCharts.find { it.id == id }?.title } ?: "Nenhuma" }
+                        }
+                        val maisTocadaCount = topSongInfo?.second ?: 0
+                        
+                        val recentOpened = remember { prefsManager.getRecentSongs(1).firstOrNull() }
+                        val ultimaNome by remember(recentOpened, allSongCharts) { 
+                            androidx.compose.runtime.derivedStateOf { recentOpened?.first?.let { id -> allSongCharts.find { it.id == id }?.title } ?: "Nenhuma" }
+                        }
+                        val ultimaTempo = remember(recentOpened) {
+                            recentOpened?.second?.let { time ->
+                                val diff = System.currentTimeMillis() - time
+                                when {
+                                    diff < 60_000 -> "Há menos de 1 m"
+                                    diff < 3600_000 -> "Há ${diff / 60_000} m"
+                                    diff < 86400_000 -> "Há ${diff / 3600_000} h"
+                                    else -> "Há ${diff / 86400_000} dias"
+                                }
+                            } ?: "Nunca"
+                        }
+                        
+                        val totalVisualizacoes = remember(mostPlayed) { mostPlayed.sumOf { it.second } }
+                        val totalMusicasAbertas = mostPlayed.size
+                        val mediaAcessos = remember(totalVisualizacoes, totalMusicasAbertas) { 
+                            if (totalMusicasAbertas > 0) String.format("%.1f", totalVisualizacoes.toFloat() / totalMusicasAbertas) else "0.0" 
+                        }
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            item {
+                                Card(
+                                    modifier = Modifier.width(160.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("Acervo", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("$totalMusicas músicas", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        Text("$totalRepertorios repertórios", style = MaterialTheme.typography.bodySmall)
+                                        Text("$totalFavoritas favoritas", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(
+                                    modifier = Modifier.width(160.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("Mais Tocada", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(maisTocadaNome, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("$maisTocadaCount aberturas", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(
+                                    modifier = Modifier.width(160.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("Última Aberta", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(ultimaNome, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(ultimaTempo, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(
+                                    modifier = Modifier.width(160.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("Estatísticas", style = MaterialTheme.typography.labelMedium)
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("$totalVisualizacoes views", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        Text("$totalMusicasAbertas músicas vistas", style = MaterialTheme.typography.bodySmall)
+                                        Text("Média: $mediaAcessos", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+
+                        Text("⭐ Minhas Favoritas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+                        
+                        val favoriteSongs = allSongCharts.filter { favSet.contains(it.id.toString()) }
+                        
+                        if (favoriteSongs.isEmpty()) {
+                            Text("Nenhuma música favorita.", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                            Text("Toque na estrela para adicionar músicas.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                                items(favoriteSongs, key = { "fav_${it.id}" }) { song ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.widthIn(max = 200.dp).clickable {
+                                            prefsManager.addRecent(song.manuscriptId)
+                                            recentList = prefsManager.getRecent()
+                                            onNavigateToReader(song.manuscriptId)
+                                        }
+                                    ) {
+                                        Text(song.title, modifier = Modifier.padding(12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text("🔥 Mais Tocadas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+                        val mostPlayedSongs = prefsManager.getMostPlayedSongs(20).mapNotNull { mp -> allSongCharts.find { it.id == mp.first } }
+                        
+                        if (mostPlayedSongs.isEmpty()) {
+                            Text("Nenhuma estatística disponível.", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                        } else {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                                items(mostPlayedSongs, key = { "mp_${it.id}" }) { song ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.widthIn(max = 200.dp).clickable {
+                                            prefsManager.addRecent(song.manuscriptId)
+                                            recentList = prefsManager.getRecent()
+                                            onNavigateToReader(song.manuscriptId)
+                                        }
+                                    ) {
+                                        Text(song.title, modifier = Modifier.padding(12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text("🕒 Recentes", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+                        val recentSongsList = prefsManager.getRecentSongs(20).mapNotNull { rs -> allSongCharts.find { it.id == rs.first } }
+                        
+                        if (recentSongsList.isEmpty()) {
+                            Text("Nenhuma música aberta recentemente.", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                        } else {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                                items(recentSongsList, key = { "rs_${it.id}" }) { song ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.widthIn(max = 200.dp).clickable {
+                                            prefsManager.addRecent(song.manuscriptId)
+                                            recentList = prefsManager.getRecent()
+                                            onNavigateToReader(song.manuscriptId)
+                                        }
+                                    ) {
+                                        Text(song.title, modifier = Modifier.padding(12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(categories) { category ->
                             FilterChip(
                                 selected = selectedCategory == category,
                                 onClick = { selectedCategory = category },
@@ -196,6 +472,7 @@ fun LibraryScreen(
                                 )
                             )
                         }
+                    }
                     }
                 }
                 
@@ -210,9 +487,19 @@ fun LibraryScreen(
                         items = filteredList,
                         key = { it.id }
                     ) { manuscript ->
+                        val isFav = favoriteSet.contains(manuscript.id.toString())
                         ManuscriptCard(
                             manuscript = manuscript,
-                            onClick = { onNavigateToReader(manuscript.id) },
+                            isFavorite = isFav,
+                            onToggleFavorite = {
+                                prefsManager.toggleFavorite(manuscript.id)
+                                favoriteSet = prefsManager.getFavorites()
+                            },
+                            onClick = { 
+                                prefsManager.addRecent(manuscript.id)
+                                recentList = prefsManager.getRecent()
+                                onNavigateToReader(manuscript.id) 
+                            },
                             onDelete = { documentToDelete = manuscript }
                         )
                     }
@@ -231,6 +518,7 @@ fun LibraryScreen(
                     onClick = {
                         viewModel.deleteDocument(context, manuscript)
                         documentToDelete = null
+                        android.widget.Toast.makeText(context, "Documento apagado.", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 ) {
                     Text("Excluir", color = MaterialTheme.colorScheme.error)
@@ -243,7 +531,83 @@ fun LibraryScreen(
             }
         )
     }
+
+    backupJsonToRestore?.let { json ->
+        AlertDialog(
+            onDismissRequest = { backupJsonToRestore = null },
+            title = { Text("Substituir dados atuais?") },
+            text = { Text("Atenção: Restaurar um backup apaga TODAS as partituras, repertórios e configurações atuais, substituindo-os pelo conteúdo do backup.\nDeseja continuar?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            try {
+                                viewModel.importBackup(json)
+                                android.widget.Toast.makeText(context, "Backup restaurado com sucesso!", android.widget.Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                android.widget.Toast.makeText(context, "Erro: Arquivo Invalido. Ocorreu um problema.", android.widget.Toast.LENGTH_LONG).show()
+                            } finally {
+                                backupJsonToRestore = null
+                            }
+                        }
+                    }
+                ) {
+                    Text("Restaurar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { backupJsonToRestore = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
     
+    importResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { importResult = null },
+            title = { Text("Resumo da Importação") },
+            text = {
+                Column {
+                    Text("Repertório: ${result.repertoireName}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                    Text("Total de músicas: ${result.totalSongs}")
+                    Text("Encontradas na biblioteca: ${result.foundSongs}")
+                    
+                    if (result.missingSongNames.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Ausentes: ${result.missingSongNames.size}", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                        Text("Músicas não encontradas:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                            items(result.missingSongNames.size) { index ->
+                                Text("- ${result.missingSongNames[index]}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    coroutineScope.launch {
+                        val repWithJson = result.repertoire.copy(
+                            manuscriptIdsJson = com.example.util.RepertoireUtil.toJson(result.categories)
+                        )
+                        viewModel.insertImportedRepertoire(repWithJson, result.songsToInsert)
+                        android.widget.Toast.makeText(context, "Repertório importado com sucesso!", android.widget.Toast.LENGTH_SHORT).show()
+                        importResult = null
+                    }
+                }) {
+                    Text("Importar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { importResult = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     if (showStats) {
         AlertDialog(
             onDismissRequest = { showStats = false },
@@ -326,6 +690,8 @@ fun BottomLibraryNav(
 @Composable
 fun ManuscriptCard(
     manuscript: Manuscript,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -358,7 +724,7 @@ fun ManuscriptCard(
                     .background(Color.Black.copy(alpha = 0.1f))
             )
 
-            if (manuscript.isFavorite) {
+            if (isFavorite) {
                 Icon(
                     imageVector = Icons.Default.Star,
                     contentDescription = stringResource(R.string.favorite_desc),
@@ -403,6 +769,16 @@ fun ManuscriptCard(
                     expanded = expanded,
                     onDismissRequest = { expanded = false }
                 ) {
+                    DropdownMenuItem(
+                        text = { Text(if (isFavorite) "Remover dos Favoritos" else "Adicionar aos Favoritos") },
+                        onClick = {
+                            expanded = false
+                            onToggleFavorite()
+                        },
+                        leadingIcon = {
+                            Icon(if (isFavorite) Icons.Default.StarOutline else Icons.Default.Star, contentDescription = null)
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Excluir", color = MaterialTheme.colorScheme.error) },
                         onClick = {

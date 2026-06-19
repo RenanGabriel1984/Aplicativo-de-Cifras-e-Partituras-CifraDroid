@@ -19,10 +19,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Title
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.flow.collectLatest
@@ -81,7 +91,7 @@ fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
     viewModel: MainViewModel,
@@ -105,6 +115,32 @@ fun ReaderScreen(
     val syncEvent by com.example.util.SessionManager.syncEvents.collectAsStateWithLifecycle()
     
     val context = LocalContext.current
+    val prefsManager = remember { com.example.util.PreferencesManager(context) }
+    var themeMode by remember { mutableIntStateOf(prefsManager.getThemeMode()) }
+    var orientationMode by remember { mutableIntStateOf(prefsManager.getOrientationMode()) }
+    var isContinuousMode by remember { mutableStateOf(prefsManager.isContinuousMode()) }
+    var isCountdownEnabled by remember { mutableStateOf(prefsManager.isCountdownEnabled()) }
+    var isTouchLocked by remember { mutableStateOf(false) }
+    
+    val isDarkMode = themeMode == 1 || themeMode == 2
+    val stageBackgroundColor = when (themeMode) {
+        0 -> Color.White
+        1 -> Color.Black
+        2 -> Color(0xFF1A0000)
+        else -> Color.White
+    }
+
+    DisposableEffect(orientationMode) {
+        val activity = context.findActivity()
+        activity?.requestedOrientation = when (orientationMode) {
+            1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            2 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        onDispose {
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
 
     DisposableEffect(Unit) {
         val window = context.findActivity()?.window
@@ -123,18 +159,66 @@ fun ReaderScreen(
         }
     }
 
+    var currentTool by remember { mutableStateOf(com.example.ui.components.AnnotationTool.NONE) }
+    var annotations by remember { mutableStateOf(emptyList<com.example.util.PdfAnnotation>()) }
+    var bookmarks by remember { mutableStateOf(emptyList<com.example.util.PdfBookmark>()) }
+    var undoStack by remember { mutableStateOf(emptyList<List<com.example.util.PdfAnnotation>>()) }
+    var redoStack by remember { mutableStateOf(emptyList<List<com.example.util.PdfAnnotation>>()) }
+    var textInputRequested by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    var currentTextInput by remember { mutableStateOf("") }
+
     LaunchedEffect(manuscript?.localUri) {
         val uri = manuscript?.localUri
         if (!uri.isNullOrBlank()) {
             uiState.isLoading = true
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 uiState.localDocument = com.example.util.DocumentReader.loadDocument(context, uri)
+                annotations = com.example.util.PdfAnnotationManager.loadAnnotations(context, uri)
+                bookmarks = com.example.util.PdfBookmarkManager.loadBookmarks(context, uri)
             }
             uiState.isLoading = false
         }
     }
 
+    val coroutineScope = rememberCoroutineScope()
     val currentDocument = uiState.localDocument
+    
+    val persistAnnotations = { newList: List<com.example.util.PdfAnnotation> ->
+        undoStack = undoStack + listOf(annotations)
+        redoStack = emptyList()
+        annotations = newList
+        val uri = manuscript?.localUri
+        if (!uri.isNullOrBlank()) {
+            coroutineScope.launch {
+                com.example.util.PdfAnnotationManager.saveAnnotations(context, uri, newList)
+            }
+        }
+    }
+
+    val handleAnnotationAdded = { ann: com.example.util.PdfAnnotation ->
+        persistAnnotations(annotations + ann)
+    }
+
+    val handleErase = { x: Float, y: Float, requestedPage: Int ->
+        val toErase = annotations.filter { ann ->
+            ann.page == requestedPage && 
+            when (ann.type) {
+                "PEN" -> ann.points?.any { p -> kotlin.math.hypot(p.x - x, p.y - y) < 0.05f } == true
+                "HIGHLIGHT" -> x >= ann.x && x <= ann.x + ann.width && y >= ann.y && y <= ann.y + ann.height
+                "TEXT" -> x >= ann.x && x <= ann.x + 0.3f && y >= ann.y - 0.05f && y <= ann.y + 0.05f
+                else -> false
+            }
+        }.map { it.id }.toSet()
+        if (toErase.isNotEmpty()) {
+            persistAnnotations(annotations.filterNot { toErase.contains(it.id) })
+        }
+    }
+
+    val handleTextRequest = { x: Float, y: Float ->
+        textInputRequested = androidx.compose.ui.geometry.Offset(x, y)
+        currentTextInput = ""
+    }
+
     DisposableEffect(currentDocument) {
         onDispose {
             if (currentDocument is com.example.util.DocumentContent.PdfDoc) {
@@ -149,7 +233,6 @@ fun ReaderScreen(
         else -> defaultPages.size
     }
     val pagerState = rememberPagerState(pageCount = { pageCount })
-    val coroutineScope = rememberCoroutineScope()
     
     var topBarHeight by remember { mutableStateOf(0.dp) }
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
@@ -182,14 +265,11 @@ fun ReaderScreen(
                 ) 
             }
         } else if (repertoire != null) {
-            try {
-                val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
-                val ids = List(arr.length()) { i -> arr.getInt(i) }
-                val currentIndex = ids.indexOf(manuscriptId)
-                if (currentIndex in 0 until ids.size - 1) {
-                    onNavigateToManuscript(ids[currentIndex + 1])
-                }
-            } catch (e: Exception) { }
+            val ids = com.example.util.RepertoireUtil.getFlatManuscriptIds(repertoire!!)
+            val currentIndex = ids.indexOf(manuscriptId)
+            if (currentIndex in 0 until ids.size - 1) {
+                onNavigateToManuscript(ids[currentIndex + 1])
+            }
         }
     }
     
@@ -203,14 +283,11 @@ fun ReaderScreen(
                 ) 
             }
         } else if (repertoire != null) {
-            try {
-                val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
-                val ids = List(arr.length()) { i -> arr.getInt(i) }
-                val currentIndex = ids.indexOf(manuscriptId)
-                if (currentIndex > 0) {
-                    onNavigateToManuscript(ids[currentIndex - 1])
-                }
-            } catch (e: Exception) { }
+            val ids = com.example.util.RepertoireUtil.getFlatManuscriptIds(repertoire!!)
+            val currentIndex = ids.indexOf(manuscriptId)
+            if (currentIndex > 0) {
+                onNavigateToManuscript(ids[currentIndex - 1])
+            }
         }
     }
     
@@ -247,6 +324,11 @@ fun ReaderScreen(
     var lastKeystrokeTime by remember { mutableLongStateOf(0L) }
     var hudInteractionTime by remember { mutableLongStateOf(0L) }
     
+    var showGoToDialog by remember { mutableStateOf(false) }
+    var showBookmarkAddDialog by remember { mutableStateOf(false) }
+    var showBookmarksSheet by remember { mutableStateOf(false) }
+    var showThumbnails by remember { mutableStateOf(false) }
+    
     androidx.activity.compose.BackHandler(
         enabled = uiState.showHud || uiState.showMusicList || uiState.selectedSongChartId != null || uiState.showImportDiagnostic
     ) {
@@ -271,22 +353,23 @@ fun ReaderScreen(
     
     val pagerModifier = Modifier
         .fillMaxSize()
-        .pointerInput(isStageMode) {
+        .pointerInput(isTouchLocked, isStageMode) {
             detectTapGestures(
                 onTap = { offset ->
-                    if (!isStageMode) {
-                        val width = size.width
-                        val x = offset.x
-                        val leftBoundary = width * 0.3f
-                        val rightBoundary = width * 0.7f
-                        if (x < leftBoundary) {
-                            attemptPrevPageOrPrevSong()
-                        } else if (x > rightBoundary) {
-                            attemptNextPageOrNextSong()
-                        } else {
-                            toggleHud()
-                            hudInteractionTime = System.currentTimeMillis()
-                        }
+                    if (isTouchLocked) return@detectTapGestures
+                    
+                    val width = size.width
+                    val x = offset.x
+                    val leftBoundary = width * 0.3f
+                    val rightBoundary = width * 0.7f
+                    
+                    if (x < leftBoundary) {
+                        attemptPrevPageOrPrevSong()
+                    } else if (x > rightBoundary) {
+                        attemptNextPageOrNextSong()
+                    } else {
+                        toggleHud()
+                        hudInteractionTime = System.currentTimeMillis()
                     }
                 }
             )
@@ -322,14 +405,14 @@ fun ReaderScreen(
         }
         
         if (uiState.isLoading) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.fillMaxSize().background(stageBackgroundColor).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
         } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black) // Deep black for reader
+                    .background(stageBackgroundColor) // Stage mode background
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                 .focusRequester(focusRequester)
                 .focusable()
@@ -362,7 +445,7 @@ fun ReaderScreen(
                     }
                 }
         ) {
-            Column(modifier = Modifier.fillMaxSize().background(if (uiState.showMusicList) Color.Black else Color.Transparent)) {
+            Column(modifier = Modifier.fillMaxSize().background(if (uiState.showMusicList) stageBackgroundColor else Color.Transparent)) {
                 Box(modifier = Modifier.weight(1f)) {
                     if (uiState.showImportDiagnostic) {
                         DiagnosticScreen(
@@ -373,12 +456,20 @@ fun ReaderScreen(
                     } else if (uiState.selectedSongChartId != null) {
                         SongChartScreen(
                             songChartId = uiState.selectedSongChartId!!,
+                            repertoireId = repertoireId,
                             viewModel = viewModel,
-                            onBack = { uiState.selectedSongChartId = null }
+                            onBack = { uiState.selectedSongChartId = null },
+                            onNavigateToSongChart = { uiState.selectedSongChartId = it },
+                            isStageMode = isStageMode,
+                            showHud = uiState.showHud,
+                            isTouchLocked = isTouchLocked,
+                            onToggleHud = toggleHud,
+                            isDarkMode = isDarkMode
                         )
                     } else if (uiState.showMusicList) {
                         SongListScreen(
                             manuscriptId = manuscriptId,
+                            repertoireId = repertoireId,
                             topBarHeight = topBarHeight,
                             bottomBarHeight = bottomBarHeight,
                             viewModel = viewModel,
@@ -395,7 +486,17 @@ fun ReaderScreen(
                                 modifier = pagerModifier,
                                 beyondViewportPageCount = 1
                             ) { page ->
-                                PageContent(page, uiState.localDocument, defaultPages, isChoirMode)
+                                PageContent(
+                                    page = page, 
+                                    localDocument = uiState.localDocument, 
+                                    defaultPages = defaultPages, 
+                                    isChoirMode = isChoirMode,
+                                    annotations = annotations,
+                                    currentTool = currentTool,
+                                    onAnnotationAdded = handleAnnotationAdded,
+                                    onEraseRequested = { x, y -> handleErase(x, y, page) },
+                                    onTextRequested = handleTextRequest
+                                )
                             }
                         } else {
                             HorizontalPager(
@@ -403,7 +504,17 @@ fun ReaderScreen(
                                 modifier = pagerModifier,
                                 beyondViewportPageCount = 1
                             ) { page ->
-                                PageContent(page, uiState.localDocument, defaultPages, isChoirMode)
+                                PageContent(
+                                    page = page, 
+                                    localDocument = uiState.localDocument, 
+                                    defaultPages = defaultPages, 
+                                    isChoirMode = isChoirMode,
+                                    annotations = annotations,
+                                    currentTool = currentTool,
+                                    onAnnotationAdded = handleAnnotationAdded,
+                                    onEraseRequested = { x, y -> handleErase(x, y, page) },
+                                    onTextRequested = handleTextRequest
+                                )
                             }
                         }
                         
@@ -413,6 +524,26 @@ fun ReaderScreen(
                     }
                 } // End inner Box
             } // End Column
+
+            if (isTouchLocked) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(32.dp),
+                    contentAlignment = Alignment.TopEnd
+                ) {
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { isTouchLocked = false },
+                        colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Desbloquear Tela"
+                        )
+                    }
+                }
+            }
 
             // HUD
             AnimatedVisibility(
@@ -450,12 +581,9 @@ fun ReaderScreen(
                                 )
                                 Text(
                                     text = if (repertoire != null) {
-                                        val idx = (try {
-                                            val arr = org.json.JSONArray(repertoire!!.manuscriptIdsJson)
-                                            val ids = List(arr.length()) { i -> arr.getInt(i) }
-                                            ids.indexOf(manuscriptId)
-                                        } catch(e: Exception) { -1 }) + 1
-                                        val total = (try { org.json.JSONArray(repertoire!!.manuscriptIdsJson).length() } catch(e: Exception){ 0 })
+                                        val ids = com.example.util.RepertoireUtil.getFlatManuscriptIds(repertoire!!)
+                                        val idx = ids.indexOf(manuscriptId) + 1
+                                        val total = ids.size
                                         "${currentManuscript?.title ?: ""} - $idx de $total"
                                     } else {
                                         currentManuscript?.composer ?: ""
@@ -511,6 +639,14 @@ fun ReaderScreen(
                                     onDismissRequest = { showMenu = false }
                                 ) {
                                     DropdownMenuItem(
+                                        text = { Text(if (uiState.showMusicList) "Alternar para PDF" else "Alternar para Músicas") },
+                                        onClick = {
+                                            uiState.showMusicList = !uiState.showMusicList
+                                            uiState.selectedSongChartId = null
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(if (isVerticalScroll) "Mudar para rolagem horizontal" else "Mudar para rolagem vertical") },
                                         onClick = {
                                             viewModel.setVerticalScroll(!isVerticalScroll)
@@ -518,19 +654,231 @@ fun ReaderScreen(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Configurações Gerais...") },
+                                        text = { 
+                                            Text(when(themeMode) {
+                                                0 -> "Tema: Claro"
+                                                1 -> "Tema: Escuro"
+                                                else -> "Tema: Vermelho"
+                                            })
+                                        },
                                         onClick = {
-                                            showMenu = false
-                                            onNavigateToSettings()
+                                            themeMode = (themeMode + 1) % 3
+                                            prefsManager.setThemeMode(themeMode)
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Diagnóstico da Importação") },
+                                        text = { 
+                                            Text(when(orientationMode) {
+                                                0 -> "Girar Tela: Livre"
+                                                1 -> "Girar Tela: Retrato"
+                                                else -> "Girar Tela: Paisagem"
+                                            })
+                                        },
                                         onClick = {
-                                            showMenu = false
-                                            uiState.showImportDiagnostic = true
+                                            orientationMode = (orientationMode + 1) % 3
+                                            prefsManager.setOrientationMode(orientationMode)
+                                            // Doesn't close menu immediately to allow multiple clicks if desired
                                         }
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("Repertório Contínuo: ${if(isContinuousMode) "ON" else "OFF"}") },
+                                        onClick = {
+                                            isContinuousMode = !isContinuousMode
+                                            prefsManager.setContinuousMode(isContinuousMode)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Timer (10s) na Próxima Música: ${if(isCountdownEnabled) "ON" else "OFF"}") },
+                                        onClick = {
+                                            isCountdownEnabled = !isCountdownEnabled
+                                            prefsManager.setCountdownEnabled(isCountdownEnabled)
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (isStageMode) "Sair do Modo Palco" else "Modo Palco (Ocultar Menus)") },
+                                        onClick = {
+                                            viewModel.setStageMode(!isStageMode)
+                                            uiState.showHud = !isStageMode // Se entrou no modo palco, oculta. (Inverted since state hasn't updated yet)
+                                            if (!isStageMode) { uiState.showHud = false }
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Travar Tela") },
+                                        onClick = {
+                                            isTouchLocked = true
+                                            uiState.showHud = false
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Miniaturas") },
+                                        onClick = {
+                                            showThumbnails = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Ir para Página") },
+                                        onClick = {
+                                            showGoToDialog = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Adicionar Marcador") },
+                                        onClick = {
+                                            showBookmarkAddDialog = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Marcadores") },
+                                        onClick = {
+                                            showBookmarksSheet = true
+                                            showMenu = false
+                                        }
+                                    )
+                                }
+                                
+                                if (showBookmarkAddDialog && currentDocument is com.example.util.DocumentContent.PdfDoc) {
+                                    var bookmarkName by remember { mutableStateOf("") }
+                                    var bookmarkColor by remember { mutableStateOf("#2196F3") }
+                                    val colorOptions = listOf(
+                                        "#2196F3" to "Azul",
+                                        "#4CAF50" to "Verde",
+                                        "#FFEB3B" to "Amarelo",
+                                        "#F44336" to "Vermelho",
+                                        "#9C27B0" to "Roxo"
+                                    )
+                                    AlertDialog(
+                                        onDismissRequest = { showBookmarkAddDialog = false },
+                                        title = { Text("Adicionar Marcador") },
+                                        text = {
+                                            Column {
+                                                OutlinedTextField(
+                                                    value = bookmarkName,
+                                                    onValueChange = { bookmarkName = it },
+                                                    label = { Text("Nome do Marcador") },
+                                                    singleLine = true,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                Spacer(modifier = Modifier.height(16.dp))
+                                                Text("Cor do Marcador", style = MaterialTheme.typography.labelMedium)
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                                    colorOptions.forEach { (colorHex, _) ->
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(40.dp)
+                                                                .background(Color(android.graphics.Color.parseColor(colorHex)), shape = androidx.compose.foundation.shape.CircleShape)
+                                                                .then(if (bookmarkColor == colorHex) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, shape = androidx.compose.foundation.shape.CircleShape) else Modifier.border(1.dp, Color.Gray, shape = androidx.compose.foundation.shape.CircleShape))
+                                                                .clickable { bookmarkColor = colorHex }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(onClick = {
+                                                val uri = manuscript?.localUri
+                                                if (bookmarkName.isNotBlank() && uri != null) {
+                                                    val hash = com.example.util.PdfBookmarkManager.getHash(uri)
+                                                    val newBookmark = com.example.util.PdfBookmark(
+                                                        pdfHash = hash,
+                                                        name = bookmarkName,
+                                                        page = pagerState.currentPage,
+                                                        verticalOffset = 0,
+                                                        color = bookmarkColor
+                                                    )
+                                                    bookmarks = (bookmarks + newBookmark).sortedWith(compareBy({ it.page }, { it.verticalOffset }))
+                                                    coroutineScope.launch {
+                                                        com.example.util.PdfBookmarkManager.saveBookmarks(context, uri, bookmarks)
+                                                    }
+                                                }
+                                                showBookmarkAddDialog = false
+                                            }) { Text("Salvar") }
+                                        },
+                                        dismissButton = {
+                                            TextButton(onClick = { showBookmarkAddDialog = false }) { Text("Cancelar") }
+                                        }
+                                    )
+                                }
+
+                                if (showGoToDialog) {
+                                    var pageInput by remember { mutableStateOf("") }
+                                    AlertDialog(
+                                        onDismissRequest = { showGoToDialog = false },
+                                        title = { Text("Ir para Página") },
+                                        text = {
+                                            OutlinedTextField(
+                                                value = pageInput,
+                                                onValueChange = { pageInput = it },
+                                                label = { Text("Página (1 a $pageCount)") },
+                                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                                            )
+                                        },
+                                        confirmButton = {
+                                            TextButton(onClick = {
+                                                val p = pageInput.toIntOrNull()
+                                                if (p != null && p in 1..pageCount) {
+                                                    coroutineScope.launch {
+                                                        pagerState.scrollToPage(p - 1)
+                                                    }
+                                                    showGoToDialog = false
+                                                }
+                                            }) {
+                                                Text("Ir")
+                                            }
+                                        },
+                                        dismissButton = {
+                                            TextButton(onClick = { showGoToDialog = false }) { Text("Cancelar") }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (showThumbnails) {
+                        ModalBottomSheet(
+                            onDismissRequest = { showThumbnails = false },
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 8.dp
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)) {
+                                Text(
+                                    "Miniaturas das Páginas", 
+                                    style = MaterialTheme.typography.titleMedium, 
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                                androidx.compose.foundation.lazy.LazyRow(
+                                    contentPadding = PaddingValues(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(pageCount) { index ->
+                                        Surface(
+                                            modifier = Modifier
+                                                .width(100.dp)
+                                                .aspectRatio(0.7f)
+                                                .clickable {
+                                                    coroutineScope.launch { pagerState.scrollToPage(index) }
+                                                    showThumbnails = false
+                                                },
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                width = if (pagerState.currentPage == index) 2.dp else 1.dp,
+                                                color = if (pagerState.currentPage == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                            )
+                                        ) {
+                                            PageContent(index, uiState.localDocument, defaultPages)
+                                            Box(modifier = Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.BottomCenter) {
+                                                Surface(color = Color.Black.copy(alpha = 0.7f), shape = RoundedCornerShape(4.dp)) {
+                                                    Text("${index + 1}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -578,11 +926,18 @@ fun ReaderScreen(
                                     Icon(Icons.Default.ChevronLeft, contentDescription = stringResource(R.string.previous))
                                 }
                                 
-                                Text(
-                                    text = "${pagerState.currentPage + 1} / $pageCount",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                )
+                                Surface(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    onClick = { showGoToDialog = true }
+                                ) {
+                                    Text(
+                                        text = "Página ${pagerState.currentPage + 1} de $pageCount (${((pagerState.currentPage + 1).toFloat() / pageCount * 100).toInt()}%)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
                                 
                                 IconButton(onClick = { 
                                     attemptNextPageOrNextSong()
@@ -594,8 +949,212 @@ fun ReaderScreen(
                     }
                 }
             }
-        } // Close Box
-        } // Close else if (!isLoading)
+
+            val currentBookmarkIndex by remember(bookmarks, pagerState.currentPage) {
+                derivedStateOf {
+                    val currPage = pagerState.currentPage
+                    bookmarks.indexOfLast { it.page <= currPage }
+                }
+            }
+            val currentBookmark = if (currentBookmarkIndex >= 0) bookmarks[currentBookmarkIndex] else null
+            val prevBookmark = if (currentBookmarkIndex > 0) bookmarks[currentBookmarkIndex - 1] else null
+            val nextBookmark = if (currentBookmarkIndex >= 0 && currentBookmarkIndex < bookmarks.size - 1) bookmarks[currentBookmarkIndex + 1] else if (currentBookmarkIndex < 0 && bookmarks.isNotEmpty()) bookmarks[0] else null
+
+            if (bookmarks.isNotEmpty() && !uiState.showMusicList) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Indicador Visual
+                    if (currentBookmark != null) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
+                        ) {
+                            Text(
+                                text = "[${currentBookmark.name}]",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(android.graphics.Color.parseColor(currentBookmark.color)),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    // Mini Painel Rápido (only when controls are visible)
+                    if (uiState.showHud) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 90.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f),
+                            shadowElevation = 4.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        prevBookmark?.let { b -> coroutineScope.launch { pagerState.animateScrollToPage(b.page) } }
+                                    },
+                                    enabled = prevBookmark != null
+                                ) {
+                                    Icon(Icons.Default.SkipPrevious, contentDescription = "Marcador Anterior")
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 16.dp)) {
+                                    Text(
+                                        text = currentBookmark?.name ?: "---",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (currentBookmark != null) Color(android.graphics.Color.parseColor(currentBookmark.color)) else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        nextBookmark?.let { b -> coroutineScope.launch { pagerState.animateScrollToPage(b.page) } }
+                                    },
+                                    enabled = nextBookmark != null
+                                ) {
+                                    Icon(Icons.Default.SkipNext, contentDescription = "Próximo Marcador")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        if (uiState.localDocument is com.example.util.DocumentContent.PdfDoc && !isStageMode && !uiState.showMusicList) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f),
+                    shadowElevation = 4.dp
+                ) {
+                    Column(modifier = Modifier.padding(4.dp)) {
+                        val activeColor = MaterialTheme.colorScheme.primary
+                        val idleColor = MaterialTheme.colorScheme.onSurface
+                        IconButton(onClick = { currentTool = if (currentTool == com.example.ui.components.AnnotationTool.PEN) com.example.ui.components.AnnotationTool.NONE else com.example.ui.components.AnnotationTool.PEN }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Caneta", tint = if (currentTool == com.example.ui.components.AnnotationTool.PEN) activeColor else idleColor)
+                        }
+                        IconButton(onClick = { currentTool = if (currentTool == com.example.ui.components.AnnotationTool.HIGHLIGHT) com.example.ui.components.AnnotationTool.NONE else com.example.ui.components.AnnotationTool.HIGHLIGHT }) {
+                            Icon(Icons.Default.Create, contentDescription = "Marca Texto", tint = if (currentTool == com.example.ui.components.AnnotationTool.HIGHLIGHT) activeColor else idleColor)
+                        }
+                        IconButton(onClick = { currentTool = if (currentTool == com.example.ui.components.AnnotationTool.TEXT) com.example.ui.components.AnnotationTool.NONE else com.example.ui.components.AnnotationTool.TEXT }) {
+                            Icon(Icons.Default.Title, contentDescription = "Texto", tint = if (currentTool == com.example.ui.components.AnnotationTool.TEXT) activeColor else idleColor)
+                        }
+                        IconButton(onClick = { currentTool = if (currentTool == com.example.ui.components.AnnotationTool.ERASER) com.example.ui.components.AnnotationTool.NONE else com.example.ui.components.AnnotationTool.ERASER }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Borracha", tint = if (currentTool == com.example.ui.components.AnnotationTool.ERASER) activeColor else idleColor)
+                        }
+                        if (undoStack.isNotEmpty()) {
+                            IconButton(onClick = {
+                                val prev = undoStack.last()
+                                redoStack = redoStack + listOf(annotations)
+                                undoStack = undoStack.dropLast(1)
+                                annotations = prev
+                                val uri = manuscript?.localUri
+                                if (!uri.isNullOrBlank()) {
+                                    coroutineScope.launch { com.example.util.PdfAnnotationManager.saveAnnotations(context, uri, prev) }
+                                }
+                            }) {
+                                Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Desfazer")
+                            }
+                        }
+                        if (redoStack.isNotEmpty()) {
+                            IconButton(onClick = {
+                                val next = redoStack.last()
+                                undoStack = undoStack + listOf(annotations)
+                                redoStack = redoStack.dropLast(1)
+                                annotations = next
+                                val uri = manuscript?.localUri
+                                if (!uri.isNullOrBlank()) {
+                                    coroutineScope.launch { com.example.util.PdfAnnotationManager.saveAnnotations(context, uri, next) }
+                                }
+                            }) {
+                                Icon(androidx.compose.material.icons.Icons.Default.ArrowForward, contentDescription = "Refazer")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (textInputRequested != null) {
+            AlertDialog(
+                onDismissRequest = { textInputRequested = null; currentTextInput = "" },
+                title = { Text("Adicionar Texto") },
+                text = {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = currentTextInput,
+                        onValueChange = { currentTextInput = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (currentTextInput.isNotBlank()) {
+                            val x = textInputRequested!!.x
+                            val y = textInputRequested!!.y
+                            val ann = com.example.util.PdfAnnotation(
+                                page = pagerState.currentPage,
+                                type = "TEXT",
+                                x = x,
+                                y = y,
+                                text = currentTextInput,
+                                color = "#FF0000"
+                            )
+                            handleAnnotationAdded(ann)
+                        }
+                        textInputRequested = null
+                        currentTextInput = ""
+                    }) {
+                        Text("Salvar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { textInputRequested = null; currentTextInput = "" }) {
+                        Text("Cancelar")
+                    }
+                }
+            )
+        }
+
+        if (showBookmarksSheet) {
+            @OptIn(ExperimentalMaterial3Api::class)
+            ModalBottomSheet(
+                onDismissRequest = { showBookmarksSheet = false }
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Marcadores", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 16.dp))
+                    if (bookmarks.isEmpty()) {
+                        Text("Nenhum marcador criado.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn {
+                            items(bookmarks.size) { index ->
+                                val bookmark = bookmarks[index]
+                                androidx.compose.material3.ListItem(
+                                    headlineContent = { Text(bookmark.name) },
+                                    supportingContent = { Text("Página ${bookmark.page + 1}") },
+                                    leadingContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .background(Color(android.graphics.Color.parseColor(bookmark.color)), shape = androidx.compose.foundation.shape.CircleShape)
+                                        )
+                                    },
+                                    modifier = Modifier.clickable {
+                                        coroutineScope.launch {
+                                            pagerState.animateScrollToPage(bookmark.page)
+                                            // Se no futuro houver suporte melhorado, lidar com verticalOffset aqui
+                                        }
+                                        showBookmarksSheet = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+        }
+        }
     } else {
         // Loading State
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -607,12 +1166,36 @@ fun ReaderScreen(
 @Composable
 fun SongListScreen(
     manuscriptId: Int,
+    repertoireId: Int? = null,
     topBarHeight: androidx.compose.ui.unit.Dp,
     bottomBarHeight: androidx.compose.ui.unit.Dp,
     viewModel: MainViewModel,
     onSongChartSelected: (Int) -> Unit
 ) {
     val songCharts by viewModel.getSongCharts(manuscriptId).collectAsStateWithLifecycle(emptyList())
+    val repertoireSongs by if (repertoireId != null) viewModel.getSongsForRepertoire(repertoireId).collectAsStateWithLifecycle(emptyList()) else remember { mutableStateOf(emptyList()) }
+    
+    val context = LocalContext.current
+    val prefsManager = remember { com.example.util.PreferencesManager(context) }
+    var updateTrigger by remember { mutableIntStateOf(0) }
+    
+    var selectedFilter by remember { mutableStateOf("Todos") }
+    val displayCharts = remember(songCharts, selectedFilter, updateTrigger) {
+        when (selectedFilter) {
+            "Favoritas" -> songCharts.filter { prefsManager.isFavoriteSong(it.id) }
+            "Mais Tocadas" -> {
+                val mostPlayed = prefsManager.getMostPlayedSongs(20)
+                val sorted = mostPlayed.mapNotNull { mp -> songCharts.find { it.id == mp.first } }
+                sorted
+            }
+            "Recentes" -> {
+                val recent = prefsManager.getRecentSongs(20)
+                val sorted = recent.mapNotNull { r -> songCharts.find { it.id == r.first } }
+                sorted
+            }
+            else -> songCharts
+        }
+    }
 
     androidx.compose.material3.Scaffold(
         containerColor = Color.Transparent
@@ -627,7 +1210,6 @@ fun SongListScreen(
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                // Use measured heights. Add extra padding so items aren't completely flush with bars.
                 top = topBarHeight + 16.dp, 
                 bottom = bottomBarHeight + 16.dp, 
                 start = 16.dp,
@@ -635,11 +1217,87 @@ fun SongListScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(
-                count = songCharts.size,
-                key = { index -> songCharts[index].id }
-            ) { index ->
-            val chart = songCharts[index]
+            item {
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        androidx.compose.material3.FilterChip(
+                            selected = selectedFilter == "Todos",
+                            onClick = { selectedFilter = "Todos" },
+                            label = { Text("Todas as músicas") }
+                        )
+                    }
+                    item {
+                        androidx.compose.material3.FilterChip(
+                            selected = selectedFilter == "Favoritas",
+                            onClick = { selectedFilter = "Favoritas" },
+                            label = { Text("⭐ Favoritas") }
+                        )
+                    }
+                    item {
+                        androidx.compose.material3.FilterChip(
+                            selected = selectedFilter == "Mais Tocadas",
+                            onClick = { selectedFilter = "Mais Tocadas" },
+                            label = { Text("🔥 Mais Tocadas") }
+                        )
+                    }
+                    item {
+                        androidx.compose.material3.FilterChip(
+                            selected = selectedFilter == "Recentes",
+                            onClick = { selectedFilter = "Recentes" },
+                            label = { Text("🕒 Recentes") }
+                        )
+                    }
+                }
+                
+                if (selectedFilter == "Favoritas" || selectedFilter == "Mais Tocadas" || selectedFilter == "Recentes") {
+                    Text(
+                        text = "${displayCharts.size} músicas",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+            }
+
+            if (selectedFilter == "Favoritas" && displayCharts.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("⭐", style = MaterialTheme.typography.displayMedium)
+                            Text("Nenhuma música favorita.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                            Text("Toque na estrela para adicionar músicas.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else if (selectedFilter == "Recentes" && displayCharts.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🕒", style = MaterialTheme.typography.displayMedium)
+                            Text("Nenhuma música aberta recentemente.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+            } else if (selectedFilter == "Mais Tocadas" && displayCharts.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🔥", style = MaterialTheme.typography.displayMedium)
+                            Text("Nenhuma estatística disponível.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+            } else if (displayCharts.isNotEmpty() || selectedFilter == "Todos") {
+                items(
+                    count = displayCharts.size,
+                    key = { index -> displayCharts[index].id }
+                ) { index ->
+                val chart = displayCharts[index]
+                val repertoireSong = repertoireSongs.find { it.songChartId == chart.id }
+            
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -652,18 +1310,49 @@ fun SongListScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (repertoireId != null) {
+                        // Dummy read of updateTrigger to cause recomposition when state changes
+                        updateTrigger
+                        val isPlayed = prefsManager.isSongPlayed(repertoireId, chart.id)
+                        androidx.compose.material3.Checkbox(
+                            checked = isPlayed,
+                            onCheckedChange = { checked ->
+                                prefsManager.setSongPlayed(repertoireId, chart.id, checked)
+                                updateTrigger++
+                            },
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                    }
                     Text(
                         text = chart.title,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(end = 16.dp)
+                        modifier = Modifier.weight(1f).padding(end = 8.dp)
                     )
-                    val key = chart.savedKey ?: chart.originalKey
+                    
+                    // Trigger recomposition correctly
+                    updateTrigger
+                    val isFav = prefsManager.isFavoriteSong(chart.id)
+                    IconButton(
+                        onClick = { 
+                            prefsManager.toggleFavoriteSong(chart.id)
+                            updateTrigger++
+                        },
+                        modifier = Modifier.padding(end = 8.dp).size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isFav) Icons.Default.Star else Icons.Default.StarBorder,
+                            contentDescription = if (isFav) "Desfavoritar" else "Favoritar",
+                            tint = if (isFav) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    val key = if (repertoireId != null) { repertoireSong?.customKey ?: chart.originalKey } else { chart.savedKey ?: chart.originalKey }
                     if (key.isNotBlank()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            val isTransposed = chart.savedKey != null && chart.savedKey != chart.originalKey
+                            val isTransposed = if (repertoireId != null) { repertoireSong?.customKey != null && repertoireSong.customKey != chart.originalKey } else { chart.savedKey != null && chart.savedKey != chart.originalKey }
                             if (isTransposed) {
                                 Text(
                                     "● Transposto", 
@@ -690,10 +1379,21 @@ fun SongListScreen(
         }
         }
     }
+    }
 }
 
 @Composable
-fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, defaultPages: List<String>, isChoirMode: Boolean = false) {
+fun PageContent(
+    page: Int, 
+    localDocument: com.example.util.DocumentContent?, 
+    defaultPages: List<String>, 
+    isChoirMode: Boolean = false,
+    annotations: List<com.example.util.PdfAnnotation> = emptyList(),
+    currentTool: com.example.ui.components.AnnotationTool = com.example.ui.components.AnnotationTool.NONE,
+    onAnnotationAdded: (com.example.util.PdfAnnotation) -> Unit = {},
+    onEraseRequested: (Float, Float) -> Unit = { _, _ -> },
+    onTextRequested: (Float, Float) -> Unit = { _, _ -> }
+) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
     
     // Smart Reading Mode: dynamic scale based on scroll offset without recomposing
@@ -726,7 +1426,7 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                 bitmap = null
                 try {
                     val result = kotlinx.coroutines.withTimeoutOrNull(5000L) {
-                        localDocument.engine.renderPage(page, scale = 1.2f)
+                        localDocument.engine.renderPage(page)
                     }
                     if (result == null) {
                         hasError = true
@@ -746,19 +1446,37 @@ fun PageContent(page: Int, localDocument: com.example.util.DocumentContent?, def
                         .fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    androidx.compose.foundation.Image(
-                        bitmap = bitmap!!.asImageBitmap(),
-                        contentDescription = stringResource(R.string.page_desc, page + 1),
-                        contentScale = ContentScale.FillWidth,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 24.dp)
-                            .graphicsLayer {
-                                val totalScale = animatedViewportScale.value
-                                scaleX = totalScale
-                                scaleY = totalScale
-                            }
-                    )
+                    Box {
+                        androidx.compose.foundation.Image(
+                            bitmap = bitmap!!.asImageBitmap(),
+                            contentDescription = stringResource(R.string.page_desc, page + 1),
+                            contentScale = ContentScale.FillWidth,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 24.dp)
+                                .graphicsLayer {
+                                    val totalScale = animatedViewportScale.value
+                                    scaleX = totalScale
+                                    scaleY = totalScale
+                                }
+                        )
+                        com.example.ui.components.PdfAnnotationOverlay(
+                            page = page,
+                            annotations = annotations,
+                            currentTool = currentTool,
+                            onAnnotationAdded = onAnnotationAdded,
+                            onEraseRequested = onEraseRequested,
+                            onTextRequested = onTextRequested,
+                            modifier = Modifier
+                                .matchParentSize()
+                                .padding(horizontal = 8.dp, vertical = 24.dp)
+                                .graphicsLayer {
+                                    val totalScale = animatedViewportScale.value
+                                    scaleX = totalScale
+                                    scaleY = totalScale
+                                }
+                        )
+                    }
                 }
             } else if (hasError) {
                 Box(modifier = Modifier.fillMaxWidth().height(400.dp).background(Color.White).padding(8.dp), contentAlignment = Alignment.Center) {
