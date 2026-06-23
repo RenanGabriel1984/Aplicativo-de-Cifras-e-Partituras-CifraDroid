@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-class PdfReaderEngine(private val file: File) {
+class PdfReaderEngine(val file: File) {
     private var pfd: ParcelFileDescriptor? = null
     private var renderer: PdfRenderer? = null
     

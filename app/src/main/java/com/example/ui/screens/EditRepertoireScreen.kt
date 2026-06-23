@@ -15,7 +15,7 @@ import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -235,7 +235,7 @@ fun EditRepertoireScreen(
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                         Icon(
-                                            if (isCollapsed) Icons.Default.ArrowRight else Icons.Default.ArrowDropDown, 
+                                            if (isCollapsed) androidx.compose.material.icons.Icons.Default.KeyboardArrowRight else androidx.compose.material.icons.Icons.Default.ArrowDropDown, 
                                             contentDescription = "Expandir/Recolher",
                                             tint = MaterialTheme.colorScheme.primary
                                         )

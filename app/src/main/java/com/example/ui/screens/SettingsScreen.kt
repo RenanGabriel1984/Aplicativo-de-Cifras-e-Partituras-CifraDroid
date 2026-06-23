@@ -80,6 +80,41 @@ fun SettingsScreen(
             Divider(modifier = Modifier.padding(vertical = 8.dp))
             
             Text(
+                "Palco & Performance",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp)
+            )
+
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val prefsManager = remember { com.example.util.PreferencesManager(context) }
+            var extremeFocus by remember { mutableStateOf(prefsManager.isExtremeFocusModeEnabled()) }
+            ListItem(
+                headlineContent = { Text("Modo Foco Extremo") },
+                supportingContent = { Text("Oculta menus, exibe apenas cifra/partitura e painel de palco") },
+                trailingContent = {
+                    Switch(checked = extremeFocus, onCheckedChange = {
+                        extremeFocus = it
+                        prefsManager.setExtremeFocusModeEnabled(it)
+                    })
+                }
+            )
+
+            var nextSongAlert by remember { mutableStateOf(prefsManager.isNextSongAlertEnabled()) }
+            ListItem(
+                headlineContent = { Text("Alerta de Próxima Música") },
+                supportingContent = { Text("Tela fullscreen de alerta antes de avançar para a próxima música") },
+                trailingContent = {
+                    Switch(checked = nextSongAlert, onCheckedChange = {
+                        nextSongAlert = it
+                        prefsManager.setNextSongAlertEnabled(it)
+                    })
+                }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text(
                 "Navegação e Controles",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,

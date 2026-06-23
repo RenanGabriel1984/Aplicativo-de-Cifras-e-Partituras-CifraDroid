@@ -40,6 +40,70 @@ class PreferencesManager(context: Context) {
         }.sortedByDescending { it.second }.take(limit)
     }
 
+    fun getPlayedPerformanceSongs(repertoireId: Int): Set<Int> {
+        val set = prefs.getStringSet("performance_$repertoireId", emptySet()) ?: emptySet()
+        return set.mapNotNull { it.toIntOrNull() }.toSet()
+    }
+    
+    fun setPlayedPerformanceSongs(repertoireId: Int, played: Set<Int>) {
+        val set = played.map { it.toString() }.toSet()
+        prefs.edit().putStringSet("performance_$repertoireId", set).apply()
+    }
+    
+    fun addPlayedPerformanceSong(repertoireId: Int, songId: Int) {
+        val played = getPlayedPerformanceSongs(repertoireId).toMutableSet()
+        played.add(songId)
+        setPlayedPerformanceSongs(repertoireId, played)
+    }
+
+    fun clearPlayedPerformanceSongs(repertoireId: Int) {
+        prefs.edit().remove("performance_$repertoireId").apply()
+    }
+
+    fun getPerformanceStartTime(repertoireId: Int): Long {
+        return prefs.getLong("performance_time_$repertoireId", 0L)
+    }
+
+    fun setPerformanceStartTime(repertoireId: Int, timeMs: Long) {
+        prefs.edit().putLong("performance_time_$repertoireId", timeMs).apply()
+    }
+
+    fun getPerformanceElapsedTime(repertoireId: Int): Long {
+        return prefs.getLong("performance_elapsed_$repertoireId", 0L)
+    }
+
+    fun setPerformanceElapsedTime(repertoireId: Int, elapsedMs: Long) {
+        prefs.edit().putLong("performance_elapsed_$repertoireId", elapsedMs).apply()
+    }
+
+    fun clearPerformanceTime(repertoireId: Int) {
+        prefs.edit().remove("performance_time_$repertoireId").remove("performance_elapsed_$repertoireId").apply()
+    }
+
+    fun getPerformanceNote(songChartId: Int): String {
+        return prefs.getString("performance_notes_$songChartId", "") ?: ""
+    }
+
+    fun setPerformanceNote(songChartId: Int, note: String) {
+        prefs.edit().putString("performance_notes_$songChartId", note).apply()
+    }
+
+    fun isNextSongAlertEnabled(): Boolean {
+        return prefs.getBoolean("show_next_song_alert_enabled", false)
+    }
+
+    fun setNextSongAlertEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("show_next_song_alert_enabled", enabled).apply()
+    }
+
+    fun isExtremeFocusModeEnabled(): Boolean {
+        return prefs.getBoolean("extreme_focus_mode_enabled", false)
+    }
+
+    fun setExtremeFocusModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("extreme_focus_mode_enabled", enabled).apply()
+    }
+
     fun getFavoriteSongs(): Set<String> {
         return prefs.getStringSet("favorite_songs", emptySet()) ?: emptySet()
     }

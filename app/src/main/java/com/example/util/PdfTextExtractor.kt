@@ -27,4 +27,28 @@ object PdfTextExtractor {
             ""
         }
     }
+
+    fun extractTextByPage(context: Context, file: File): List<PageText> {
+        return try {
+            PDFBoxResourceLoader.init(context.applicationContext)
+            val pages = mutableListOf<PageText>()
+            PDDocument.load(file).use { document ->
+                val totalPages = document.numberOfPages
+                val stripper = PDFTextStripper()
+                stripper.sortByPosition = true
+                
+                for (i in 1..totalPages) {
+                    stripper.startPage = i
+                    stripper.endPage = i
+                    val pageText = stripper.getText(document) ?: ""
+                    // Pages in model are usually 0-indexed, but PDFTextStripper uses 1-indexed. Let's make page class 0-indexed as requested by standard indexing.
+                    pages.add(PageText(page = i - 1, text = pageText))
+                }
+            }
+            pages
+        } catch (e: Exception) {
+            Log.e("PdfTextExtractor", "Erro na extração de texto por página", e)
+            emptyList()
+        }
+    }
 }

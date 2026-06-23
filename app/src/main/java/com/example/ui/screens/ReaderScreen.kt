@@ -4,6 +4,8 @@ import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
@@ -35,6 +38,9 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.ui.text.style.TextAlign
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -238,6 +244,51 @@ fun ReaderScreen(
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     val density = androidx.compose.ui.platform.LocalDensity.current
 
+    val isExtremeFocusMode = remember { prefsManager.isExtremeFocusModeEnabled() }
+    val isNextSongAlertEnabled = remember { prefsManager.isNextSongAlertEnabled() }
+    
+    var pendingNextSongId by remember { mutableStateOf<Int?>(null) }
+    var nextSongCountdown by remember { mutableIntStateOf(10) }
+
+    var showPerformancePanel by remember { mutableStateOf(false) }
+    val allManuscripts by viewModel.allManuscripts.collectAsStateWithLifecycle(emptyList())
+    var playedPerformanceSongs by remember(repertoireId) { 
+        mutableStateOf(if (repertoireId != null) prefsManager.getPlayedPerformanceSongs(repertoireId) else emptySet()) 
+    }
+    var performanceStartTime by remember(repertoireId) {
+        mutableLongStateOf(if (repertoireId != null) prefsManager.getPerformanceStartTime(repertoireId) else 0L)
+    }
+    var performanceElapsedTime by remember(repertoireId) {
+        mutableLongStateOf(if (repertoireId != null) prefsManager.getPerformanceElapsedTime(repertoireId) else 0L)
+    }
+    var isPerformanceTimerRunning by remember { mutableStateOf(false) }
+
+    var showMarkersPanel by remember { mutableStateOf(false) }
+    val detectedMarkers by produceState<List<com.example.util.ScoreMarker>>(initialValue = emptyList(), uiState.localDocument) {
+        val document = uiState.localDocument
+        if (document is com.example.util.DocumentContent.PdfDoc) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val pagesText = com.example.util.PdfTextExtractor.extractTextByPage(context, document.engine.file)
+                com.example.util.ScoreMarkerDetector.detectFromPages(pagesText)
+            }
+        } else {
+            value = emptyList()
+        }
+    }
+
+    // Retomar logic
+    var showResumeDialog by remember { mutableStateOf(false) }
+    var showFinishDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(repertoireId) {
+        if (repertoireId != null) {
+            val played = prefsManager.getPlayedPerformanceSongs(repertoireId)
+            val allIds = com.example.util.RepertoireUtil.getFlatManuscriptIds(repertoire!!)
+            if (played.isNotEmpty() && played.size < allIds.size) {
+                showResumeDialog = true
+            }
+        }
+    }
+
     val view = androidx.compose.ui.platform.LocalView.current
     val window = (context as? android.app.Activity)?.window
 
@@ -267,8 +318,23 @@ fun ReaderScreen(
         } else if (repertoire != null) {
             val ids = com.example.util.RepertoireUtil.getFlatManuscriptIds(repertoire!!)
             val currentIndex = ids.indexOf(manuscriptId)
+
+            if (repertoireId != null) {
+                prefsManager.addPlayedPerformanceSong(repertoireId, manuscriptId)
+                playedPerformanceSongs = prefsManager.getPlayedPerformanceSongs(repertoireId)
+                if (playedPerformanceSongs.size >= ids.size && !showFinishDialog) {
+                    showFinishDialog = true
+                }
+            }
+
             if (currentIndex in 0 until ids.size - 1) {
-                onNavigateToManuscript(ids[currentIndex + 1])
+                val nextId = ids[currentIndex + 1]
+                if (isNextSongAlertEnabled) {
+                    pendingNextSongId = nextId
+                    nextSongCountdown = 10
+                } else {
+                    onNavigateToManuscript(nextId)
+                }
             }
         }
     }
@@ -328,6 +394,7 @@ fun ReaderScreen(
     var showBookmarkAddDialog by remember { mutableStateOf(false) }
     var showBookmarksSheet by remember { mutableStateOf(false) }
     var showThumbnails by remember { mutableStateOf(false) }
+    
     
     androidx.activity.compose.BackHandler(
         enabled = uiState.showHud || uiState.showMusicList || uiState.selectedSongChartId != null || uiState.showImportDiagnostic
@@ -547,7 +614,7 @@ fun ReaderScreen(
 
             // HUD
             AnimatedVisibility(
-                visible = uiState.showHud,
+                visible = uiState.showHud && !isExtremeFocusMode,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
@@ -629,15 +696,25 @@ fun ReaderScreen(
                             }
                             
                             var showMenu by remember { mutableStateOf(false) }
+                            var editNoteDialog by remember { mutableStateOf(false) }
                             
-                            Box {
-                                IconButton(onClick = { showMenu = true }) {
-                                    Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_desc), tint = MaterialTheme.colorScheme.primary)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (repertoire != null) {
+                                    IconButton(onClick = { editNoteDialog = true }) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Editar Nota de Palco")
+                                    }
+                                    IconButton(onClick = { showPerformancePanel = !showPerformancePanel }) {
+                                        Icon(Icons.Default.Menu, contentDescription = "Painel de Execução", tint = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
-                                DropdownMenu(
-                                    expanded = showMenu,
-                                    onDismissRequest = { showMenu = false }
-                                ) {
+                                Box {
+                                    IconButton(onClick = { showMenu = true }) {
+                                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings_desc), tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                    DropdownMenu(
+                                        expanded = showMenu,
+                                        onDismissRequest = { showMenu = false }
+                                    ) {
                                     DropdownMenuItem(
                                         text = { Text(if (uiState.showMusicList) "Alternar para PDF" else "Alternar para Músicas") },
                                         onClick = {
@@ -736,6 +813,13 @@ fun ReaderScreen(
                                         text = { Text("Marcadores") },
                                         onClick = {
                                             showBookmarksSheet = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Debug: Marcadores Musicais") },
+                                        onClick = {
+                                            showMarkersPanel = true
                                             showMenu = false
                                         }
                                     )
@@ -1019,6 +1103,81 @@ fun ReaderScreen(
                 }
             }
 
+            if (isStageMode && !uiState.showHud && !isTouchLocked && !uiState.showMusicList) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    var performanceNote by remember(manuscriptId) { mutableStateOf(prefsManager.getPerformanceNote(manuscriptId)) }
+                    if (performanceNote.isNotBlank()) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 16.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.9f)
+                        ) {
+                            Text(
+                                text = "Nota: $performanceNote",
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+
+                    // Floating fast navigation
+                    val ids = repertoire?.let { com.example.util.RepertoireUtil.getFlatManuscriptIds(it) }
+                    val currentIdx = ids?.indexOf(manuscriptId) ?: -1
+                    val hasPrev = currentIdx > 0
+                    val hasNext = ids != null && currentIdx < ids.size - 1
+
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = 32.dp, end = 16.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.95f),
+                        shadowElevation = 8.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { 
+                                    if (hasPrev) onNavigateToManuscript(ids!![currentIdx - 1])
+                                },
+                                enabled = hasPrev
+                            ) {
+                                Icon(Icons.Default.SkipPrevious, contentDescription = "Música Anterior", tint = if (hasPrev) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                            }
+                            
+                            val isPlayed = playedPerformanceSongs.contains(manuscriptId)
+                            IconButton(onClick = { 
+                                if (repertoireId != null) {
+                                    val newSet = if (isPlayed) playedPerformanceSongs - manuscriptId else playedPerformanceSongs + manuscriptId
+                                    prefsManager.setPlayedPerformanceSongs(repertoireId, newSet)
+                                    playedPerformanceSongs = newSet
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = androidx.compose.material.icons.Icons.Default.CheckCircle, 
+                                    contentDescription = "Marcar Executada",
+                                    tint = if (isPlayed) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            IconButton(
+                                onClick = { 
+                                    if (hasNext) onNavigateToManuscript(ids!![currentIdx + 1])
+                                },
+                                enabled = hasNext
+                            ) {
+                                Icon(Icons.Default.SkipNext, contentDescription = "Próxima Música", tint = if (hasNext) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                            }
+                        }
+                    }
+                }
+            }
+
         if (uiState.localDocument is com.example.util.DocumentContent.PdfDoc && !isStageMode && !uiState.showMusicList) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Surface(
@@ -1067,7 +1226,7 @@ fun ReaderScreen(
                                     coroutineScope.launch { com.example.util.PdfAnnotationManager.saveAnnotations(context, uri, next) }
                                 }
                             }) {
-                                Icon(androidx.compose.material.icons.Icons.Default.ArrowForward, contentDescription = "Refazer")
+                                Icon(Icons.Default.ArrowForward, contentDescription = "Refazer")
                             }
                         }
                     }
@@ -1152,6 +1311,126 @@ fun ReaderScreen(
                     Spacer(modifier = Modifier.height(32.dp))
                 }
             }
+        } // This closes if (showBookmarksSheet)
+
+        if (showMarkersPanel) {
+            @OptIn(ExperimentalMaterial3Api::class)
+            ModalBottomSheet(
+                onDismissRequest = { showMarkersPanel = false }
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Marcadores Musicais Detectados", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 16.dp))
+                    if (detectedMarkers.isEmpty()) {
+                        Text("Nenhum marcador detectado neste documento.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn {
+                            items(detectedMarkers.size) { index ->
+                                val marker = detectedMarkers[index]
+                                androidx.compose.material3.ListItem(
+                                    headlineContent = { Text(marker.type.name, style = MaterialTheme.typography.titleMedium) },
+                                    supportingContent = { Text("Página ${marker.page + 1}\nTexto encontrado: ${marker.text}") }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+
+        if (showFinishDialog) {
+            AlertDialog(
+                onDismissRequest = { showFinishDialog = false },
+                title = { Text("Repertório concluído") },
+                text = {
+                    val totalSec = performanceElapsedTime / 1000
+                    Text("Tempo total:\n${totalSec / 60} minutos\n\nMúsicas:\n${playedPerformanceSongs.size}\n\nExecutadas:\n${playedPerformanceSongs.size}")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (repertoireId != null) {
+                            prefsManager.clearPlayedPerformanceSongs(repertoireId)
+                            prefsManager.clearPerformanceTime(repertoireId)
+                        }
+                        showFinishDialog = false
+                    }) { Text("Concluir") }
+                }
+            )
+        }
+
+        if (showResumeDialog) {
+            AlertDialog(
+                onDismissRequest = { showResumeDialog = false },
+                title = { Text("Retomar Repertório") },
+                text = { Text("Deseja continuar de onde parou?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showResumeDialog = false
+                    }) { Text("Continuar") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        if (repertoireId != null) {
+                            prefsManager.clearPlayedPerformanceSongs(repertoireId)
+                            prefsManager.clearPerformanceTime(repertoireId)
+                            playedPerformanceSongs = emptySet()
+                            performanceElapsedTime = 0L
+                            performanceStartTime = 0L
+                        }
+                        showResumeDialog = false
+                    }) { Text("Recomeçar") }
+                }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showPerformancePanel,
+            enter = slideInHorizontally(initialOffsetX = { -it }),
+            exit = slideOutHorizontally(targetOffsetX = { -it }),
+            modifier = Modifier.align(Alignment.CenterStart)
+        ) {
+            com.example.ui.components.PerformanceSidebar(
+                repertoire = repertoire,
+                manuscripts = allManuscripts,
+                currentSongId = manuscriptId,
+                playedSongs = playedPerformanceSongs,
+                onSongClick = { id -> 
+                    showPerformancePanel = false
+                    onNavigateToManuscript(id) 
+                },
+                onClose = { showPerformancePanel = false },
+                onFinish = {
+                    showPerformancePanel = false
+                    showFinishDialog = true
+                },
+                startTime = performanceStartTime,
+                elapsedTime = performanceElapsedTime,
+                isTimerRunning = isPerformanceTimerRunning,
+                onTimerStart = {
+                    if (repertoireId != null) {
+                        performanceStartTime = System.currentTimeMillis()
+                        prefsManager.setPerformanceStartTime(repertoireId, performanceStartTime)
+                        isPerformanceTimerRunning = true
+                    }
+                },
+                onTimerPause = {
+                    if (repertoireId != null && isPerformanceTimerRunning) {
+                        val elapsedNow = performanceElapsedTime + (System.currentTimeMillis() - performanceStartTime)
+                        performanceElapsedTime = elapsedNow
+                        prefsManager.setPerformanceElapsedTime(repertoireId, elapsedNow)
+                        isPerformanceTimerRunning = false
+                    }
+                },
+                onTimerReset = {
+                    if (repertoireId != null) {
+                        isPerformanceTimerRunning = false
+                        performanceElapsedTime = 0L
+                        performanceStartTime = 0L
+                        prefsManager.clearPerformanceTime(repertoireId)
+                    }
+                }
+            )
+        }
         }
         }
         }
