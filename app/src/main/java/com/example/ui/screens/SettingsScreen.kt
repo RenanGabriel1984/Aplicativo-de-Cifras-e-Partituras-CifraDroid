@@ -112,6 +112,30 @@ fun SettingsScreen(
                 }
             )
 
+            var autoConfirmMusical by remember { mutableStateOf(prefsManager.isAutoConfirmMusicalInstructionsEnabled()) }
+            ListItem(
+                headlineContent = { Text("Confirmar automaticamente instruções musicais") },
+                supportingContent = { Text("Executa saltos como D.S. e To Coda automaticamente após uma breve contagem") },
+                trailingContent = {
+                    Switch(checked = autoConfirmMusical, onCheckedChange = {
+                        autoConfirmMusical = it
+                        prefsManager.setAutoConfirmMusicalInstructionsEnabled(it)
+                    })
+                }
+            )
+
+            var silentMode by remember { mutableStateOf(prefsManager.isSilentModeEnabled()) }
+            ListItem(
+                headlineContent = { Text("Modo Silencioso") },
+                supportingContent = { Text("Nenhum diálogo ou popup será exibido durante a execução") },
+                trailingContent = {
+                    Switch(checked = silentMode, onCheckedChange = {
+                        silentMode = it
+                        prefsManager.setSilentModeEnabled(it)
+                    })
+                }
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             Text(

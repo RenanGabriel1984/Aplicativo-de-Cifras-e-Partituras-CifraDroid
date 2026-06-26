@@ -172,6 +172,7 @@ fun ReaderScreen(
     var redoStack by remember { mutableStateOf(emptyList<List<com.example.util.PdfAnnotation>>()) }
     var textInputRequested by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
     var currentTextInput by remember { mutableStateOf("") }
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
 
     LaunchedEffect(manuscript?.localUri) {
         val uri = manuscript?.localUri
@@ -246,6 +247,8 @@ fun ReaderScreen(
 
     val isExtremeFocusMode = remember { prefsManager.isExtremeFocusModeEnabled() }
     val isNextSongAlertEnabled = remember { prefsManager.isNextSongAlertEnabled() }
+    val isAutoConfirmMusicalInstructions = remember { prefsManager.isAutoConfirmMusicalInstructionsEnabled() }
+    val isSilentMode = remember { prefsManager.isSilentModeEnabled() }
     
     var pendingNextSongId by remember { mutableStateOf<Int?>(null) }
     var nextSongCountdown by remember { mutableIntStateOf(10) }
@@ -273,6 +276,76 @@ fun ReaderScreen(
             }
         } else {
             value = emptyList()
+        }
+    }
+
+    val scoreRelationships by remember {
+        derivedStateOf { com.example.util.ScoreRelationshipEngine.buildRelationships(detectedMarkers) }
+    }
+
+    var musicalTimeline by remember(manuscriptId) { mutableStateOf(com.example.util.MusicalTimeline()) }
+    var ultimaPaginaNotificada by remember { mutableStateOf<Int?>(null) }
+    var currentMusicalAction by remember { mutableStateOf<com.example.util.MusicalExecutionAction?>(null) }
+    var autoConfirmCountdown by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(currentMusicalAction) {
+        if (currentMusicalAction != null && isAutoConfirmMusicalInstructions) {
+            autoConfirmCountdown = 3
+            while (autoConfirmCountdown > 0) {
+                kotlinx.coroutines.delay(1000)
+                autoConfirmCountdown--
+            }
+            val action = currentMusicalAction
+            if (action != null) {
+                val targetPage = action.targetPage
+                if (targetPage >= 0 && targetPage < pageCount) {
+                    musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                    pagerState.animateScrollToPage(targetPage)
+                } else {
+                    musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                }
+                currentMusicalAction = null
+            }
+        }
+    }
+
+    LaunchedEffect(pagerState.currentPage, detectedMarkers) {
+        val markersInPage = detectedMarkers.filter { it.page == pagerState.currentPage }
+        musicalTimeline = com.example.util.MusicalTimelineEngine.updatePage(
+            timeline = musicalTimeline,
+            page = pagerState.currentPage,
+            markersInPage = markersInPage
+        )
+    }
+
+    LaunchedEffect(pagerState.currentPage, scoreRelationships, musicalTimeline) {
+        if (ultimaPaginaNotificada != pagerState.currentPage) {
+            val relationship = scoreRelationships.firstOrNull { it.sourcePage == pagerState.currentPage }
+            if (relationship != null) {
+                if (relationship.relationshipType == com.example.util.RelationshipType.UNRESOLVED) {
+                    val alreadyExecuted = musicalTimeline.executedRelationships.any { 
+                        it.relationshipId == relationship.sourceMarkerId && it.pass == musicalTimeline.currentPass 
+                    }
+                    if (!alreadyExecuted) {
+                        android.widget.Toast.makeText(context, "Destino musical não encontrado.", android.widget.Toast.LENGTH_SHORT).show()
+                        musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, relationship)
+                    }
+                } else {
+                    val action = com.example.util.MusicalExecutionEngine.evaluateCurrentPage(
+                        currentPage = pagerState.currentPage,
+                        relationships = scoreRelationships,
+                        timeline = musicalTimeline
+                    )
+                    if (action != null) {
+                        currentMusicalAction = action
+                    } else {
+                        currentMusicalAction = null
+                    }
+                }
+            } else {
+                currentMusicalAction = null
+            }
+            ultimaPaginaNotificada = pagerState.currentPage
         }
     }
 
@@ -1383,6 +1456,86 @@ fun ReaderScreen(
             )
         }
 
+        if (!isSilentMode) {
+            val upcomingMarker = remember(pagerState.currentPage, detectedMarkers, musicalTimeline) {
+                val nextPages = (pagerState.currentPage + 1)..(pagerState.currentPage + 3)
+                detectedMarkers.firstOrNull { marker ->
+                    marker.page in nextPages && 
+                    marker.type in listOf(
+                        com.example.util.ScoreMarkerType.DAL_SEGNO, 
+                        com.example.util.ScoreMarkerType.DA_CAPO, 
+                        com.example.util.ScoreMarkerType.TO_CODA, 
+                        com.example.util.ScoreMarkerType.FINE, 
+                        com.example.util.ScoreMarkerType.AL_FINE, 
+                        com.example.util.ScoreMarkerType.SEGNO, 
+                        com.example.util.ScoreMarkerType.CODA
+                    ) &&
+                    !musicalTimeline.visitedMarkers.contains(marker.id)
+                }
+            }
+
+            if (currentMusicalAction != null) {
+                val action = currentMusicalAction!!
+                val title = when (action.relationship.relationshipType) {
+                    com.example.util.RelationshipType.DA_CAPO_TO_START -> "D.C."
+                    com.example.util.RelationshipType.DAL_SEGNO_TO_SEGNO -> "D.S."
+                    com.example.util.RelationshipType.TO_CODA_TO_CODA -> "To Coda"
+                    com.example.util.RelationshipType.AL_FINE_TO_FINE -> "Fine"
+                    else -> "Instrução Musical"
+                }
+
+                if (isAutoConfirmMusicalInstructions) {
+                    PerformanceCueOverlay(
+                        title = title,
+                        description = "Executando em $autoConfirmCountdown",
+                        progress = if (autoConfirmCountdown > 0) autoConfirmCountdown / 3f else 0f
+                    )
+                } else {
+                    PerformanceCueOverlay(
+                        title = title,
+                        description = "Executando...",
+                        onExecute = {
+                            val targetPage = action.targetPage
+                            if (targetPage < 0 || targetPage >= pageCount) {
+                                android.widget.Toast.makeText(context, "Destino fora do documento.", android.widget.Toast.LENGTH_SHORT).show()
+                                musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                            } else {
+                                musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                                val msg = when (action.relationship.relationshipType) {
+                                    com.example.util.RelationshipType.DA_CAPO_TO_START -> "D.C. → início"
+                                    com.example.util.RelationshipType.DAL_SEGNO_TO_SEGNO -> "D.S. → página ${targetPage + 1}"
+                                    com.example.util.RelationshipType.TO_CODA_TO_CODA -> "To Coda → página ${targetPage + 1}"
+                                    com.example.util.RelationshipType.AL_FINE_TO_FINE -> "Fine → página ${targetPage + 1}"
+                                    else -> "Salto executado"
+                                }
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(targetPage)
+                                    snackbarHostState.showSnackbar(msg)
+                                }
+                            }
+                            currentMusicalAction = null 
+                        },
+                        onDismiss = { currentMusicalAction = null }
+                    )
+                }
+            } else if (upcomingMarker != null) {
+                val distance = upcomingMarker.page - pagerState.currentPage
+                val typeStr = when (upcomingMarker.type) {
+                    com.example.util.ScoreMarkerType.DA_CAPO -> "Da Capo"
+                    com.example.util.ScoreMarkerType.DAL_SEGNO -> "Dal Segno"
+                    com.example.util.ScoreMarkerType.TO_CODA -> "To Coda"
+                    com.example.util.ScoreMarkerType.FINE, com.example.util.ScoreMarkerType.AL_FINE -> "Fine"
+                    com.example.util.ScoreMarkerType.SEGNO -> "Segno"
+                    com.example.util.ScoreMarkerType.CODA -> "Coda"
+                    else -> "Instrução"
+                }
+                PerformanceCueOverlay(
+                    title = "Prepare-se",
+                    description = "$typeStr em $distance página" + if (distance > 1) "s" else ""
+                )
+            }
+        }
+
         AnimatedVisibility(
             visible = showPerformancePanel,
             enter = slideInHorizontally(initialOffsetX = { -it }),
@@ -1431,6 +1584,65 @@ fun ReaderScreen(
                 }
             )
         }
+
+        if (!isExtremeFocusMode) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 80.dp, start = 16.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .padding(12.dp)
+                    .align(Alignment.TopStart)
+            ) {
+                Column {
+                    val passName = when(musicalTimeline.currentPass) {
+                        com.example.util.MusicalPass.FIRST_PASS -> "1ª Passagem"
+                        com.example.util.MusicalPass.SECOND_PASS -> "2ª Passagem"
+                        com.example.util.MusicalPass.THIRD_PASS -> "3ª Passagem"
+                        com.example.util.MusicalPass.FINAL_PASS -> "Última Passagem"
+                    }
+                    Text(passName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    
+                    if (musicalTimeline.executedRelationships.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        musicalTimeline.executedRelationships.forEach { rel ->
+                            val markerType = detectedMarkers.firstOrNull { it.id == rel.relationshipId }?.type
+                            val relName = when (markerType) {
+                                com.example.util.ScoreMarkerType.DA_CAPO -> "D.C."
+                                com.example.util.ScoreMarkerType.DAL_SEGNO -> "D.S."
+                                com.example.util.ScoreMarkerType.TO_CODA -> "To Coda"
+                                com.example.util.ScoreMarkerType.AL_FINE -> "Fine"
+                                else -> "Salto"
+                            }
+                            Text("✓ $relName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    val upcomingRel = scoreRelationships.firstOrNull { rel ->
+                        rel.sourcePage >= pagerState.currentPage && !musicalTimeline.executedRelationships.any { it.relationshipId == rel.sourceMarkerId && it.pass == musicalTimeline.currentPass }
+                    }
+                    if (upcomingRel != null && !musicalTimeline.timelineFinished) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val upcomingType = when (upcomingRel.relationshipType) {
+                            com.example.util.RelationshipType.DA_CAPO_TO_START -> "D.C."
+                            com.example.util.RelationshipType.DAL_SEGNO_TO_SEGNO -> "D.S."
+                            com.example.util.RelationshipType.TO_CODA_TO_CODA -> "To Coda"
+                            com.example.util.RelationshipType.AL_FINE_TO_FINE -> "Fine"
+                            else -> "Salto"
+                        }
+                        Text("Próximo: $upcomingType", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    } else if (musicalTimeline.timelineFinished) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Fim da música", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
+        androidx.compose.material3.SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
+        )
+
         }
         }
         }

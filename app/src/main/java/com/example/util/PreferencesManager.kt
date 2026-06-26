@@ -96,6 +96,22 @@ class PreferencesManager(context: Context) {
         prefs.edit().putBoolean("show_next_song_alert_enabled", enabled).apply()
     }
 
+    fun isAutoConfirmMusicalInstructionsEnabled(): Boolean {
+        return prefs.getBoolean("auto_confirm_musical_instructions", false)
+    }
+
+    fun setAutoConfirmMusicalInstructionsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_confirm_musical_instructions", enabled).apply()
+    }
+
+    fun isSilentModeEnabled(): Boolean {
+        return prefs.getBoolean("silent_mode_enabled", false)
+    }
+
+    fun setSilentModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("silent_mode_enabled", enabled).apply()
+    }
+
     fun isExtremeFocusModeEnabled(): Boolean {
         return prefs.getBoolean("extreme_focus_mode_enabled", false)
     }
