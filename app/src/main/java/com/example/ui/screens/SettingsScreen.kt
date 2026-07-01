@@ -88,6 +88,32 @@ fun SettingsScreen(
 
             val context = androidx.compose.ui.platform.LocalContext.current
             val prefsManager = remember { com.example.util.PreferencesManager(context) }
+
+            var readingProfile by remember { mutableStateOf(prefsManager.getReadingProfile()) }
+            var showProfileMenu by remember { mutableStateOf(false) }
+
+            ListItem(
+                headlineContent = { Text("Perfil Musical do Dashboard") },
+                supportingContent = { Text(readingProfile.name) },
+                modifier = Modifier.clickable { showProfileMenu = true }
+            )
+            
+            DropdownMenu(
+                expanded = showProfileMenu,
+                onDismissRequest = { showProfileMenu = false }
+            ) {
+                com.example.util.ReadingProfile.entries.forEach { profile ->
+                    DropdownMenuItem(
+                        text = { Text(profile.name) },
+                        onClick = {
+                            readingProfile = profile
+                            prefsManager.setReadingProfile(profile)
+                            showProfileMenu = false
+                        }
+                    )
+                }
+            }
+
             var extremeFocus by remember { mutableStateOf(prefsManager.isExtremeFocusModeEnabled()) }
             ListItem(
                 headlineContent = { Text("Modo Foco Extremo") },

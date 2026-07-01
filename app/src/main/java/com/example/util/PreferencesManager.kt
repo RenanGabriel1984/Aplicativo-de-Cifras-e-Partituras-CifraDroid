@@ -225,4 +225,17 @@ class PreferencesManager(context: Context) {
     fun setChordFontSize(size: Float) {
         prefs.edit().putFloat("chord_font_size", size).apply()
     }
+
+    fun getReadingProfile(): ReadingProfile {
+        val name = prefs.getString("reading_profile", ReadingProfile.DEFAULT.name) ?: ReadingProfile.DEFAULT.name
+        return try {
+            ReadingProfile.valueOf(name)
+        } catch (e: Exception) {
+            ReadingProfile.DEFAULT
+        }
+    }
+
+    fun setReadingProfile(profile: ReadingProfile) {
+        prefs.edit().putString("reading_profile", profile.name).apply()
+    }
 }

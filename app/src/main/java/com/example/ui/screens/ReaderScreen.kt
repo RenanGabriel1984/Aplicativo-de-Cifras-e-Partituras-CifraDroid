@@ -53,9 +53,12 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.util.readerGestures
 import com.example.data.DataProvider
 import com.example.ui.MainViewModel
 import kotlinx.coroutines.launch
@@ -245,13 +248,43 @@ fun ReaderScreen(
     var bottomBarHeight by remember { mutableStateOf(0.dp) }
     val density = androidx.compose.ui.platform.LocalDensity.current
 
-    val isExtremeFocusMode = remember { prefsManager.isExtremeFocusModeEnabled() }
-    val isNextSongAlertEnabled = remember { prefsManager.isNextSongAlertEnabled() }
-    val isAutoConfirmMusicalInstructions = remember { prefsManager.isAutoConfirmMusicalInstructionsEnabled() }
-    val isSilentMode = remember { prefsManager.isSilentModeEnabled() }
+    var isExtremeFocusMode by remember { mutableStateOf(prefsManager.isExtremeFocusModeEnabled()) }
+    var isNextSongAlertEnabled by remember { mutableStateOf(prefsManager.isNextSongAlertEnabled()) }
+    var isAutoConfirmMusicalInstructions by remember { mutableStateOf(prefsManager.isAutoConfirmMusicalInstructionsEnabled()) }
+    var isSilentMode by remember { mutableStateOf(prefsManager.isSilentModeEnabled()) }
     
     var pendingNextSongId by remember { mutableStateOf<Int?>(null) }
     var nextSongCountdown by remember { mutableIntStateOf(10) }
+
+    val performanceSession by com.example.util.PerformanceSessionManager.session.collectAsStateWithLifecycle()
+    
+    LaunchedEffect(performanceSession?.isRunning) {
+        var lastTick = System.currentTimeMillis()
+        while (performanceSession?.isRunning == true) {
+            kotlinx.coroutines.delay(1000)
+            val now = System.currentTimeMillis()
+            com.example.util.PerformanceSessionManager.updateTime((performanceSession?.elapsedTime ?: 0L) + (now - lastTick))
+            lastTick = now
+        }
+    }
+    
+    LaunchedEffect(performanceSession?.isRunning) {
+        if (performanceSession?.isRunning == true) {
+            isExtremeFocusMode = true
+            uiState.showHud = true
+            viewModel.setStageMode(true)
+            isNextSongAlertEnabled = true
+            isAutoConfirmMusicalInstructions = true
+        }
+    }
+
+    LaunchedEffect(uiState.localDocument) {
+        val docName = (uiState.localDocument as? com.example.util.DocumentContent.PdfDoc)?.engine?.file?.name ?: "Música"
+        if (performanceSession?.isRunning == true && performanceSession?.currentSong != docName) {
+            com.example.util.PerformanceSessionManager.updateCurrentSong(docName)
+            com.example.util.PerformanceSessionManager.incrementSongsPlayed()
+        }
+    }
 
     var showPerformancePanel by remember { mutableStateOf(false) }
     val allManuscripts by viewModel.allManuscripts.collectAsStateWithLifecycle(emptyList())
@@ -283,7 +316,32 @@ fun ReaderScreen(
         derivedStateOf { com.example.util.ScoreRelationshipEngine.buildRelationships(detectedMarkers) }
     }
 
+    val musicalStructure by produceState(
+        initialValue = com.example.util.MusicalStructure(emptyList()),
+        pageCount, detectedMarkers, scoreRelationships
+    ) {
+        value = com.example.util.MusicalStructureEngine.analyzeStructure(
+            pageCount = pageCount,
+            markers = detectedMarkers,
+            relationships = scoreRelationships,
+            timeline = null
+        )
+    }
+
+    var showStructureBottomSheet by remember { mutableStateOf(false) }
+
     var musicalTimeline by remember(manuscriptId) { mutableStateOf(com.example.util.MusicalTimeline()) }
+    
+    val musicalSemantics by remember(musicalStructure, detectedMarkers, musicalTimeline) {
+        derivedStateOf {
+            com.example.util.MusicalSemanticsEngine.inferSemantics(
+                structure = musicalStructure,
+                markers = detectedMarkers,
+                timeline = musicalTimeline
+            )
+        }
+    }
+
     var ultimaPaginaNotificada by remember { mutableStateOf<Int?>(null) }
     var currentMusicalAction by remember { mutableStateOf<com.example.util.MusicalExecutionAction?>(null) }
     var autoConfirmCountdown by remember { mutableIntStateOf(0) }
@@ -300,9 +358,11 @@ fun ReaderScreen(
                 val targetPage = action.targetPage
                 if (targetPage >= 0 && targetPage < pageCount) {
                     musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                    if (performanceSession?.isRunning == true) { com.example.util.PerformanceSessionManager.incrementRelationships() }
                     pagerState.animateScrollToPage(targetPage)
                 } else {
                     musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                    if (performanceSession?.isRunning == true) { com.example.util.PerformanceSessionManager.incrementRelationships() }
                 }
                 currentMusicalAction = null
             }
@@ -316,6 +376,9 @@ fun ReaderScreen(
             page = pagerState.currentPage,
             markersInPage = markersInPage
         )
+        if (performanceSession?.isRunning == true) {
+            com.example.util.PerformanceSessionManager.updateCurrentPass("Passagem ${musicalTimeline.currentPass}")
+        }
     }
 
     LaunchedEffect(pagerState.currentPage, scoreRelationships, musicalTimeline) {
@@ -491,29 +554,132 @@ fun ReaderScreen(
         }
     }
     
+        val readingContext by remember(musicalStructure, musicalTimeline, pagerState.currentPage, detectedMarkers) {
+            derivedStateOf {
+                com.example.util.ReadingContextEngine.inferContext(
+                    structure = musicalStructure,
+                    timeline = musicalTimeline,
+                    currentPage = pagerState.currentPage,
+                    markers = detectedMarkers
+                )
+            }
+        }
+
+        val dashboardState by remember(musicalStructure, musicalTimeline, readingContext, performanceSession, pagerState.currentPage, detectedMarkers, repertoire) {
+            derivedStateOf {
+                val repertoireTotal = repertoire?.let { com.example.util.RepertoireUtil.getFlatManuscriptIds(it).size } ?: 0
+                com.example.util.StageDashboardEngine.produceState(
+                    structure = musicalStructure,
+                    timeline = musicalTimeline,
+                    readingContext = readingContext,
+                    session = performanceSession,
+                    currentPage = pagerState.currentPage,
+                    markers = detectedMarkers,
+                    repertoireTotal = repertoireTotal
+                )
+            }
+        }
+
+        val readingProfile by remember { mutableStateOf(prefsManager.getReadingProfile()) }
+        val dashboardPresentation by remember(dashboardState, musicalStructure, performanceSession, readingProfile) {
+            derivedStateOf {
+                com.example.util.ReadingProfileEngine.producePresentation(
+                    profile = readingProfile,
+                    state = dashboardState
+                )
+            }
+        }
+
+        val flowContext by remember(performanceSession, dashboardState, musicalTimeline, pagerState.currentPage, pagerState.isScrollInProgress, isExtremeFocusMode, isAutoConfirmMusicalInstructions) {
+            derivedStateOf {
+                com.example.util.FlowModeEngine.produceContext(
+                    session = performanceSession,
+                    dashboardState = dashboardState,
+                    timeline = musicalTimeline,
+                    currentPage = pagerState.currentPage,
+                    isScrollInProgress = pagerState.isScrollInProgress,
+                    focusMode = isExtremeFocusMode,
+                    autoCue = isAutoConfirmMusicalInstructions
+                )
+            }
+        }
+
+        val semanticReadingState by remember(pagerState.currentPage, musicalSemantics) {
+            derivedStateOf {
+                com.example.util.SemanticReadingEngine.produceState(
+                    currentPage = pagerState.currentPage,
+                    semantics = musicalSemantics
+                )
+            }
+        }
+
+        val adaptiveGuidanceState by remember(pagerState.currentPage, musicalStructure, musicalSemantics, musicalTimeline, scoreRelationships, detectedMarkers) {
+            derivedStateOf {
+                com.example.util.AdaptiveGuidanceEngine.produceGuidance(
+                    currentPage = pagerState.currentPage,
+                    structure = musicalStructure,
+                    semantics = musicalSemantics,
+                    timeline = musicalTimeline,
+                    relationships = scoreRelationships,
+                    markers = detectedMarkers
+                )
+            }
+        }
+
     val pagerModifier = Modifier
         .fillMaxSize()
-        .pointerInput(isTouchLocked, isStageMode) {
-            detectTapGestures(
-                onTap = { offset ->
-                    if (isTouchLocked) return@detectTapGestures
-                    
-                    val width = size.width
-                    val x = offset.x
-                    val leftBoundary = width * 0.3f
-                    val rightBoundary = width * 0.7f
-                    
-                    if (x < leftBoundary) {
-                        attemptPrevPageOrPrevSong()
-                    } else if (x > rightBoundary) {
-                        attemptNextPageOrNextSong()
-                    } else {
-                        toggleHud()
-                        hudInteractionTime = System.currentTimeMillis()
+        .readerGestures(
+            isTouchLocked, isStageMode, uiState, pagerState.currentPage, musicalStructure,
+            onTap = { offset ->
+                if (isTouchLocked || !flowContext.allowGestures) return@readerGestures
+                
+                val width = size.width
+                val x = offset.x
+                val leftBoundary = width * 0.3f
+                val rightBoundary = width * 0.7f
+                
+                if (x < leftBoundary) {
+                    attemptPrevPageOrPrevSong()
+                } else if (x > rightBoundary) {
+                    attemptNextPageOrNextSong()
+                } else {
+                    toggleHud()
+                    hudInteractionTime = System.currentTimeMillis()
+                }
+            },
+            onGesture = { gesture ->
+                if (isTouchLocked || !flowContext.allowGestures) return@readerGestures
+                when (gesture) {
+                    com.example.util.ReaderGesture.DOUBLE_TAP -> {
+                        val nextSection = musicalStructure.sections.firstOrNull { it.startPage > pagerState.currentPage }
+                        if (nextSection != null) {
+                            coroutineScope.launch { pagerState.animateScrollToPage(nextSection.startPage) }
+                        }
+                    }
+                    com.example.util.ReaderGesture.LONG_PRESS -> {
+                        showBookmarkAddDialog = true
+                    }
+                    com.example.util.ReaderGesture.SWIPE_UP -> {
+                        uiState.showHud = true
+                    }
+                    com.example.util.ReaderGesture.SWIPE_DOWN -> {
+                        uiState.showHud = false
+                    }
+                    com.example.util.ReaderGesture.SWIPE_LEFT -> {
+                        showMarkersPanel = true
+                    }
+                    com.example.util.ReaderGesture.SWIPE_RIGHT -> {
+                        uiState.showMusicList = true
+                    }
+                    com.example.util.ReaderGesture.TWO_FINGER_TAP -> {
+                        isExtremeFocusMode = !isExtremeFocusMode
+                    }
+                    com.example.util.ReaderGesture.THREE_FINGER_TAP -> {
+                        showPerformancePanel = true
                     }
                 }
-            )
-        }
+            }
+        )
     
     // Auto-preload neighbor pages for zero-latency pedal turns
     LaunchedEffect(pagerState.currentPage) {
@@ -789,6 +955,18 @@ fun ReaderScreen(
                                         onDismissRequest = { showMenu = false }
                                     ) {
                                     DropdownMenuItem(
+                                        text = { Text(if (performanceSession?.isRunning == true) "Encerrar Sessão" else "Iniciar Sessão de Performance") },
+                                        onClick = {
+                                            if (performanceSession?.isRunning == true) {
+                                                com.example.util.PerformanceSessionManager.stopSession()
+                                            } else {
+                                                val docName = (currentDocument as? com.example.util.DocumentContent.PdfDoc)?.engine?.file?.name ?: "Música"
+                                                com.example.util.PerformanceSessionManager.startSession(docName)
+                                            }
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(if (uiState.showMusicList) "Alternar para PDF" else "Alternar para Músicas") },
                                         onClick = {
                                             uiState.showMusicList = !uiState.showMusicList
@@ -893,6 +1071,13 @@ fun ReaderScreen(
                                         text = { Text("Debug: Marcadores Musicais") },
                                         onClick = {
                                             showMarkersPanel = true
+                                            showMenu = false
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Estrutura Musical") },
+                                        onClick = {
+                                            showStructureBottomSheet = true
                                             showMenu = false
                                         }
                                     )
@@ -1386,6 +1571,32 @@ fun ReaderScreen(
             }
         } // This closes if (showBookmarksSheet)
 
+        if (showStructureBottomSheet) {
+            @OptIn(ExperimentalMaterial3Api::class)
+            ModalBottomSheet(
+                onDismissRequest = { showStructureBottomSheet = false }
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Estrutura Musical", style = MaterialTheme.typography.titleLarge)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    if (musicalStructure.sections.isEmpty()) {
+                        Text("Nenhuma estrutura identificada.")
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                            items(musicalStructure.sections) { section ->
+                                ListItem(
+                                    headlineContent = { Text(section.name.uppercase(), fontWeight = FontWeight.Bold) },
+                                    supportingContent = { Text("Página ${section.startPage + 1}") }
+                                )
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+
         if (showMarkersPanel) {
             @OptIn(ExperimentalMaterial3Api::class)
             ModalBottomSheet(
@@ -1499,8 +1710,10 @@ fun ReaderScreen(
                             if (targetPage < 0 || targetPage >= pageCount) {
                                 android.widget.Toast.makeText(context, "Destino fora do documento.", android.widget.Toast.LENGTH_SHORT).show()
                                 musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                                if (performanceSession?.isRunning == true) { com.example.util.PerformanceSessionManager.incrementRelationships() }
                             } else {
                                 musicalTimeline = com.example.util.MusicalTimelineEngine.executeRelationship(musicalTimeline, action.relationship)
+                                if (performanceSession?.isRunning == true) { com.example.util.PerformanceSessionManager.incrementRelationships() }
                                 val msg = when (action.relationship.relationshipType) {
                                     com.example.util.RelationshipType.DA_CAPO_TO_START -> "D.C. → início"
                                     com.example.util.RelationshipType.DAL_SEGNO_TO_SEGNO -> "D.S. → página ${targetPage + 1}"
@@ -1518,7 +1731,7 @@ fun ReaderScreen(
                         onDismiss = { currentMusicalAction = null }
                     )
                 }
-            } else if (upcomingMarker != null) {
+            } else if (upcomingMarker != null && flowContext.showMarkers) {
                 val distance = upcomingMarker.page - pagerState.currentPage
                 val typeStr = when (upcomingMarker.type) {
                     com.example.util.ScoreMarkerType.DA_CAPO -> "Da Capo"
@@ -1585,58 +1798,48 @@ fun ReaderScreen(
             )
         }
 
-        if (!isExtremeFocusMode) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 80.dp, start = 16.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(12.dp)
-                    .align(Alignment.TopStart)
-            ) {
-                Column {
-                    val passName = when(musicalTimeline.currentPass) {
-                        com.example.util.MusicalPass.FIRST_PASS -> "1ª Passagem"
-                        com.example.util.MusicalPass.SECOND_PASS -> "2ª Passagem"
-                        com.example.util.MusicalPass.THIRD_PASS -> "3ª Passagem"
-                        com.example.util.MusicalPass.FINAL_PASS -> "Última Passagem"
-                    }
-                    Text(passName, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    
-                    if (musicalTimeline.executedRelationships.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        musicalTimeline.executedRelationships.forEach { rel ->
-                            val markerType = detectedMarkers.firstOrNull { it.id == rel.relationshipId }?.type
-                            val relName = when (markerType) {
-                                com.example.util.ScoreMarkerType.DA_CAPO -> "D.C."
-                                com.example.util.ScoreMarkerType.DAL_SEGNO -> "D.S."
-                                com.example.util.ScoreMarkerType.TO_CODA -> "To Coda"
-                                com.example.util.ScoreMarkerType.AL_FINE -> "Fine"
-                                else -> "Salto"
-                            }
-                            Text("✓ $relName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-
-                    val upcomingRel = scoreRelationships.firstOrNull { rel ->
-                        rel.sourcePage >= pagerState.currentPage && !musicalTimeline.executedRelationships.any { it.relationshipId == rel.sourceMarkerId && it.pass == musicalTimeline.currentPass }
-                    }
-                    if (upcomingRel != null && !musicalTimeline.timelineFinished) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        val upcomingType = when (upcomingRel.relationshipType) {
-                            com.example.util.RelationshipType.DA_CAPO_TO_START -> "D.C."
-                            com.example.util.RelationshipType.DAL_SEGNO_TO_SEGNO -> "D.S."
-                            com.example.util.RelationshipType.TO_CODA_TO_CODA -> "To Coda"
-                            com.example.util.RelationshipType.AL_FINE_TO_FINE -> "Fine"
-                            else -> "Salto"
-                        }
-                        Text("Próximo: $upcomingType", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    } else if (musicalTimeline.timelineFinished) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Fim da música", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.statusBars)
+        ) {
+            if (performanceSession?.isRunning == true) {
+                com.example.ui.screens.PerformanceDashboard(
+                    state = dashboardState,
+                    presentation = dashboardPresentation,
+                    flowContext = flowContext,
+                    semanticState = semanticReadingState,
+                    adaptiveGuidance = adaptiveGuidanceState
+                )
+            } else {
+                AnimatedVisibility(
+                    visible = flowContext.showHud,
+                    enter = fadeIn() + androidx.compose.animation.slideInVertically { -it },
+                    exit = fadeOut() + androidx.compose.animation.slideOutVertically { -it }
+                ) {
+                    Box(modifier = Modifier.graphicsLayer(alpha = flowContext.opacity)) {
+                        ReadingHud(
+                            currentPage = pagerState.currentPage,
+                            pageCount = pageCount,
+                            musicalStructure = musicalStructure,
+                            musicalTimeline = musicalTimeline,
+                            scoreRelationships = scoreRelationships,
+                            detectedMarkers = detectedMarkers,
+                            isPerformanceMode = repertoireId != null,
+                            isFocusMode = isExtremeFocusMode,
+                            isScrollInProgress = pagerState.isScrollInProgress,
+                            readingContext = readingContext
+                        )
                     }
                 }
             }
         }
+
+        PerformanceSessionReport(
+            session = performanceSession,
+            onClose = { com.example.util.PerformanceSessionManager.clearSession() }
+        )
 
         androidx.compose.material3.SnackbarHost(
             hostState = snackbarHostState,
