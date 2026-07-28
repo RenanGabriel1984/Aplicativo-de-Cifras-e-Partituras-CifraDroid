@@ -1,0 +1,11 @@
+/if (uiState.isLoading) {/i\
+        if (showPreparationWorkspace \&\& preparationState != null) {\
+            com.example.ui.preparation.PreparationWorkspaceScreen(\
+                state = preparationState!!,\
+                responsiveState = com.example.ui.theme.ResponsiveStageState(com.example.ui.theme.ResponsiveStage.COMPACT, 600, 800, false, false),\
+                modifier = Modifier.fillMaxSize()\
+            )\
+            androidx.compose.material3.Button(onClick = { showPreparationWorkspace = false }, modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)) { Text("Voltar ao Reader") }\
+            return\
+        }
+

@@ -1,7 +1,11 @@
 package com.example.ui.screens
-
+import com.example.ui.layout.StageLayoutType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import com.example.ui.layout.ResponsiveStageState
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -286,7 +290,9 @@ fun ReaderScreen(
         }
     }
 
-    var showPerformancePanel by remember { mutableStateOf(false) }
+    val stageState = com.example.ui.layout.rememberResponsiveStageEngine()
+
+    var showPerformancePanel by remember(stageState.showSidePanels) { mutableStateOf(stageState.showSidePanels) }
     val allManuscripts by viewModel.allManuscripts.collectAsStateWithLifecycle(emptyList())
     var playedPerformanceSongs by remember(repertoireId) { 
         mutableStateOf(if (repertoireId != null) prefsManager.getPlayedPerformanceSongs(repertoireId) else emptySet()) 
@@ -327,6 +333,13 @@ fun ReaderScreen(
             timeline = null
         )
     }
+
+    val songDocument by rememberSongDocument(manuscript)
+
+    val workspace by rememberWorkspace()
+    val musicalDocument by rememberMusicalDocument(songDocument)
+    val preparationState by rememberPreparationState(musicalDocument)
+    var showPreparationWorkspace by remember { mutableStateOf(false) }
 
     var showStructureBottomSheet by remember { mutableStateOf(false) }
 
@@ -626,6 +639,127 @@ fun ReaderScreen(
             }
         }
 
+        val musicalIntentState by remember(pagerState.currentPage, musicalStructure, musicalSemantics, musicalTimeline, adaptiveGuidanceState, scoreRelationships) {
+            derivedStateOf {
+                com.example.util.MusicalIntentEngine.evaluate(
+                    currentPage = pagerState.currentPage,
+                    musicalStructure = musicalStructure,
+                    musicalSemantics = musicalSemantics,
+                    musicalTimeline = musicalTimeline,
+                    adaptiveGuidance = adaptiveGuidanceState,
+                    scoreRelationships = scoreRelationships
+                )
+            }
+        }
+
+        val conductorState by remember(pagerState.currentPage, musicalStructure, musicalSemantics, musicalTimeline) {
+            derivedStateOf {
+                com.example.util.ConductorEngine.evaluate(
+                    musicalStructure = musicalStructure,
+                    musicalSemantics = musicalSemantics,
+                    timeline = musicalTimeline,
+                    currentPage = pagerState.currentPage
+                )
+            }
+        }
+
+        val performanceIntelligence by remember(
+            pagerState.currentPage,
+            musicalTimeline,
+            musicalSemantics,
+            adaptiveGuidanceState,
+            musicalIntentState,
+            conductorState,
+            dashboardState
+        ) {
+            derivedStateOf {
+                com.example.util.PerformanceIntelligenceEngine.evaluate(
+                    timeline = musicalTimeline,
+                    musicalSemantics = musicalSemantics,
+                    guidanceState = adaptiveGuidanceState,
+                    musicalIntent = musicalIntentState,
+                    conductorState = conductorState,
+                    dashboardState = dashboardState,
+                    currentPage = pagerState.currentPage
+                )
+            }
+        }
+
+        val companionState by remember(
+            performanceIntelligence,
+            adaptiveGuidanceState,
+            musicalIntentState,
+            musicalTimeline,
+            semanticReadingState,
+            conductorState
+        ) {
+            derivedStateOf {
+                com.example.util.MusicalCompanionEngine.evaluate(
+                    intelligence = performanceIntelligence,
+                    guidance = adaptiveGuidanceState,
+                    intent = musicalIntentState,
+                    timeline = musicalTimeline,
+                    semanticReading = semanticReadingState,
+                    conductor = conductorState
+                )
+            }
+        }
+
+        val performanceMinimalState = com.example.ui.theme.rememberPerformanceMinimalEngine(
+            flowContext = flowContext,
+            musicalIntent = musicalIntentState
+        )
+
+        val immersiveContext by remember(
+            flowContext,
+            performanceIntelligence,
+            musicalIntentState,
+            adaptiveGuidanceState,
+            companionState,
+            musicalTimeline,
+            conductorState,
+            performanceMinimalState
+        ) {
+            derivedStateOf {
+                com.example.ui.theme.buildImmersiveContext(
+                    flowContext = flowContext,
+                    performanceIntelligence = performanceIntelligence,
+                    musicalIntent = musicalIntentState,
+                    adaptiveGuidance = adaptiveGuidanceState,
+                    companionState = companionState,
+                    timeline = musicalTimeline,
+                    conductorState = conductorState,
+                    minimalState = performanceMinimalState
+                )
+            }
+        }
+        
+        val baseTheme = com.example.ui.theme.LocalStageTheme.current
+
+        val ambientContext by remember(
+            flowContext,
+            performanceIntelligence,
+            musicalIntentState,
+            adaptiveGuidanceState,
+            companionState,
+            musicalTimeline,
+            conductorState,
+            baseTheme
+        ) {
+            derivedStateOf {
+                com.example.ui.theme.buildAmbientContext(
+                    flowContext = flowContext,
+                    performanceIntelligence = performanceIntelligence,
+                    musicalIntent = musicalIntentState,
+                    adaptiveGuidance = adaptiveGuidanceState,
+                    companionState = companionState,
+                    timeline = musicalTimeline,
+                    conductorState = conductorState,
+                    baseTheme = baseTheme
+                )
+            }
+        }
+
     val pagerModifier = Modifier
         .fillMaxSize()
         .readerGestures(
@@ -709,7 +843,6 @@ fun ReaderScreen(
                 // Ignore if not focused immediately
             }
         }
-        
         if (uiState.isLoading) {
             Box(modifier = Modifier.fillMaxSize().background(stageBackgroundColor).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
@@ -724,7 +857,7 @@ fun ReaderScreen(
                 .focusable()
                 .onKeyEvent { keyEvent ->
                     if (uiState.showMusicList || uiState.selectedSongChartId != null) {
-                        return@onKeyEvent false
+                    return@onKeyEvent false
                     }
                     when (keyEvent.key) {
                         Key.DirectionLeft, Key.PageUp, Key.DirectionUp -> {
@@ -1810,7 +1943,19 @@ fun ReaderScreen(
                     presentation = dashboardPresentation,
                     flowContext = flowContext,
                     semanticState = semanticReadingState,
-                    adaptiveGuidance = adaptiveGuidanceState
+                    adaptiveGuidance = adaptiveGuidanceState,
+                    musicalIntent = musicalIntentState,
+                    conductorState = conductorState,
+                    performanceIntelligence = performanceIntelligence,
+                    companionState = companionState,
+                    musicalStructure = musicalStructure,
+                    musicalSemantics = musicalSemantics,
+                    timeline = musicalTimeline,
+                    immersiveContext = immersiveContext,
+                    ambientContext = ambientContext,
+                    minimalState = performanceMinimalState,
+                    songDocument = songDocument,
+                    musicalWorkspace = workspace
                 )
             } else {
                 AnimatedVisibility(
@@ -1818,6 +1963,15 @@ fun ReaderScreen(
                     enter = fadeIn() + androidx.compose.animation.slideInVertically { -it },
                     exit = fadeOut() + androidx.compose.animation.slideOutVertically { -it }
                 ) {
+                    val stageState = com.example.ui.layout.rememberResponsiveStageEngine()
+                    val visualContext = com.example.ui.theme.rememberVisualCohesionEngine(
+                        flowContext = flowContext,
+                        responsiveState = stageState,
+                        guidance = adaptiveGuidanceState,
+                        companion = companionState,
+                        intent = musicalIntentState,
+                        timeline = musicalTimeline
+                    )
                     Box(modifier = Modifier.graphicsLayer(alpha = flowContext.opacity)) {
                         ReadingHud(
                             currentPage = pagerState.currentPage,
@@ -1829,7 +1983,9 @@ fun ReaderScreen(
                             isPerformanceMode = repertoireId != null,
                             isFocusMode = isExtremeFocusMode,
                             isScrollInProgress = pagerState.isScrollInProgress,
-                            readingContext = readingContext
+                            readingContext = readingContext,
+                            visualContext = visualContext,
+                            minimalState = performanceMinimalState
                         )
                     }
                 }
@@ -1840,11 +1996,30 @@ fun ReaderScreen(
             session = performanceSession,
             onClose = { com.example.util.PerformanceSessionManager.clearSession() }
         )
-
         androidx.compose.material3.SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
         )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showPreparationWorkspace && preparationState != null,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.Center).zIndex(100f)
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                com.example.ui.preparation.PreparationWorkspaceScreen(
+                    state = preparationState!!,
+                    responsiveState = com.example.ui.layout.ResponsiveStageState(com.example.ui.layout.StageLayoutType.PHONE, 600f.dp, 800f.dp, com.example.ui.screens.HudState.EXPANDED, true, false, false, false, false, false),
+                    modifier = Modifier.fillMaxSize()
+                )
+                androidx.compose.material3.Button(
+                    onClick = { showPreparationWorkspace = false },
+                    modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp)
+                ) {
+                    Text("Fechar")
+                }
+            }
+        }
 
         }
         }
@@ -1898,8 +2073,7 @@ fun SongListScreen(
             Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
                 Text("Nenhuma música encontrada.", color = MaterialTheme.colorScheme.onSurface)
             }
-            return@Scaffold
-        }
+        } else {
 
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -2076,6 +2250,7 @@ fun SongListScreen(
     }
 }
 
+}
 @Composable
 fun PageContent(
     page: Int, 
@@ -2211,6 +2386,72 @@ fun PageContent(
                 contentScale = ContentScale.FillWidth,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+    }
+}
+
+@Composable
+fun rememberSongDocument(manuscript: com.example.data.Manuscript?): State<com.example.domain.models.SongDocument?> {
+    return remember(manuscript) {
+        derivedStateOf {
+            if (manuscript != null) {
+                com.example.domain.SongDocumentEngine.createDocument(
+                    metadata = com.example.domain.models.SongMetadata(
+                        id = manuscript.id.toString(),
+                        title = manuscript.title,
+                        artist = "Unknown Artist",
+                        composer = "Unknown Composer",
+                        key = "C",
+                        capo = 0,
+                        bpm = 120,
+                        timeSignature = "4/4",
+                        category = com.example.domain.models.SongCategory.GENERAL,
+                        tags = emptyList(),
+                        createdAt = System.currentTimeMillis(),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            } else null
+        }
+    }
+}
+
+@Composable
+fun rememberWorkspace(): State<com.example.domain.workspace.MusicalWorkspace> {
+    return remember {
+        derivedStateOf {
+            com.example.domain.workspace.WorkspaceEngine.generateDefaultWorkspace().let {
+                it.copy(
+                    title = "Missas",
+                    statistics = it.statistics.copy(totalSongs = 12, repertoires = 3)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun rememberPreparationState(document: com.example.domain.document.MusicalDocument?): State<com.example.domain.preparation.PreparationState?> {
+    return remember(document) {
+        derivedStateOf {
+            if (document != null) {
+                com.example.domain.preparation.MusicalPreparationEngine.createPreparation(document)
+            } else {
+                null
+            }
+        }
+    }
+}
+
+@Composable
+fun rememberMusicalDocument(songDocument: com.example.domain.models.SongDocument?): State<com.example.domain.document.MusicalDocument?> {
+    return remember(songDocument) {
+        derivedStateOf {
+            if (songDocument != null) {
+                com.example.domain.document.MusicalDocumentEngine.createDocument(songDocument.metadata)
+            } else {
+                null
+            }
         }
     }
 }

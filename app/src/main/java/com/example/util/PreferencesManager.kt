@@ -238,4 +238,17 @@ class PreferencesManager(context: Context) {
     fun setReadingProfile(profile: ReadingProfile) {
         prefs.edit().putString("reading_profile", profile.name).apply()
     }
+
+    fun getStageTheme(): com.example.ui.theme.StageThemeType {
+        val name = prefs.getString("selected_stage_theme", com.example.ui.theme.StageThemeType.CLASSIC.name) ?: com.example.ui.theme.StageThemeType.CLASSIC.name
+        return try {
+            com.example.ui.theme.StageThemeType.valueOf(name)
+        } catch (e: Exception) {
+            com.example.ui.theme.StageThemeType.CLASSIC
+        }
+    }
+
+    fun setStageTheme(theme: com.example.ui.theme.StageThemeType) {
+        prefs.edit().putString("selected_stage_theme", theme.name).apply()
+    }
 }

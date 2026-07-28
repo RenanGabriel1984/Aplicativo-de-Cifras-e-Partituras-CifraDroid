@@ -89,6 +89,17 @@ fun SettingsScreen(
             val context = androidx.compose.ui.platform.LocalContext.current
             val prefsManager = remember { com.example.util.PreferencesManager(context) }
 
+            var selectedStageTheme by remember { mutableStateOf(prefsManager.getStageTheme()) }
+            
+            com.example.ui.components.StageThemePreview(
+                selectedTheme = selectedStageTheme,
+                onThemeSelected = {
+                    selectedStageTheme = it
+                    prefsManager.setStageTheme(it)
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
             var readingProfile by remember { mutableStateOf(prefsManager.getReadingProfile()) }
             var showProfileMenu by remember { mutableStateOf(false) }
 

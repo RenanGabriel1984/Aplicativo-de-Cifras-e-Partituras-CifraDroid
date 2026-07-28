@@ -10,8 +10,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.ui.theme.visualCohesion
 import kotlinx.coroutines.delay
 import com.example.util.MusicalStructure
 import com.example.util.MusicalTimeline
@@ -39,7 +41,9 @@ fun ReadingHud(
     isPerformanceMode: Boolean,
     isFocusMode: Boolean,
     isScrollInProgress: Boolean,
-    readingContext: com.example.util.ReadingContext
+    readingContext: com.example.util.ReadingContext,
+    visualContext: com.example.ui.theme.VisualContext? = null,
+    minimalState: com.example.ui.theme.PerformanceMinimalState? = null
 ) {
     var isIdle by remember { mutableStateOf(true) }
     
@@ -52,13 +56,15 @@ fun ReadingHud(
         }
     }
 
-    val hudState by remember(isFocusMode, isPerformanceMode, isIdle) {
+    val stageState = com.example.ui.layout.rememberResponsiveStageEngine()
+
+    val hudState by remember(isFocusMode, isPerformanceMode, isIdle, stageState.hudMode) {
         derivedStateOf {
             when {
                 isFocusMode -> HudState.FOCUS
                 isPerformanceMode -> HudState.PERFORMANCE
                 !isIdle -> HudState.MINIMAL
-                else -> HudState.EXPANDED
+                else -> stageState.hudMode
             }
         }
     }
@@ -93,177 +99,203 @@ fun ReadingHud(
         enter = fadeIn() + slideInVertically { -it },
         exit = fadeOut() + slideOutVertically { -it }
     ) {
-        Box(
-            modifier = Modifier
-                .widthIn(max = 600.dp)
-                .fillMaxWidth()
-                .padding(horizontal = if (hudState == HudState.MINIMAL) 32.dp else 16.dp, vertical = 24.dp)
-                .background(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (hudState == HudState.MINIMAL) 0.6f else 0.85f),
-                    shape = RoundedCornerShape(12.dp)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
+        com.example.ui.theme.StageThemeRenderer {
+            val theme = com.example.ui.theme.LocalStageTheme.current
+            
+            val minimalHudAlpha = when (minimalState?.hud) {
+                com.example.ui.theme.MinimalVisibility.HIDDEN -> 0f
+                com.example.ui.theme.MinimalVisibility.REDUCED -> 0.3f
+                else -> 1f
+            }
+            val hudAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = minimalHudAlpha,
+                label = "hudAlpha"
+            )
+            
+            Box(
                 modifier = Modifier
+                    .graphicsLayer { alpha = hudAlpha }
+                    .widthIn(max = stageState.dashboardWidth)
                     .fillMaxWidth()
-                    .padding(if (hudState == HudState.MINIMAL) 8.dp else 12.dp)
+                    .let { if (visualContext != null) it.visualCohesion(visualContext.dashboardPriority, visualContext) else it }
+                    .padding(horizontal = if (hudState == HudState.MINIMAL) 32.dp else 16.dp, vertical = 24.dp)
+                    .background(
+                        color = theme.surfaceColor.copy(alpha = if (hudState == HudState.MINIMAL) 0.6f else theme.glassOpacity),
+                        shape = RoundedCornerShape(12.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(if (hudState == HudState.MINIMAL) 8.dp else 12.dp)
                 ) {
-                    // Left side: Structure & Performance
-                    Column(modifier = Modifier.weight(1f)) {
-                        AnimatedVisibility(visible = hudState == HudState.PERFORMANCE || hudState == HudState.EXPANDED) {
-                            if (isPerformanceMode) {
-                                Text(
-                                    text = "🎵 Performance",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                        
-                        AnimatedContent(
-                            targetState = currentSection?.name ?: "SEÇÃO DESCONHECIDA",
-                            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                            label = "section_name"
-                        ) { name ->
-                            Text(
-                                text = name.uppercase(),
-                                style = if (hudState == HudState.MINIMAL) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        
-                        AnimatedVisibility(visible = hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) {
-                            if (nextSection != null) {
-                                Text(
-                                    text = "↓ Próximo: ${nextSection.name.uppercase()}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
-                        }
-                    }
-                    
-                    // Center side: Context Message
-                    AnimatedVisibility(
-                        visible = (hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) && readingContext.message != null,
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AnimatedContent(
-                            targetState = readingContext,
-                            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                            label = "context_message"
-                        ) { context ->
-                            val textColor = when(context.urgency) {
-                                com.example.util.ContextUrgency.LOW -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                                com.example.util.ContextUrgency.MEDIUM -> Color(0xFFFFBF00).copy(alpha = 0.8f)
-                                com.example.util.ContextUrgency.HIGH -> MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                        // Left side: Structure & Performance
+                        Column(modifier = Modifier.weight(1f)) {
+                            AnimatedVisibility(visible = hudState == HudState.PERFORMANCE || hudState == HudState.EXPANDED) {
+                                if (isPerformanceMode) {
+                                    Text(
+                                        text = "🎵 Performance",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = theme.accentColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
-                            Text(
-                                text = context.message ?: "",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = textColor,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-
-                    // Right side: Pass & Upcoming relationships
-                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
-                        AnimatedContent(
-                            targetState = musicalTimeline.currentPass,
-                            transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                            label = "pass_name"
-                        ) { pass ->
-                            val passName = when(pass) {
-                                MusicalPass.FIRST_PASS -> "1ª Passagem"
-                                MusicalPass.SECOND_PASS -> "2ª Passagem"
-                                MusicalPass.THIRD_PASS -> "3ª Passagem"
-                                MusicalPass.FINAL_PASS -> "Última Passagem"
-                            }
-                            Text(
-                                text = passName,
-                                style = if (hudState == HudState.MINIMAL) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        AnimatedVisibility(visible = hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) {
+                            
                             AnimatedContent(
-                                targetState = Pair(upcomingMarker, musicalTimeline.timelineFinished),
+                                targetState = currentSection?.name ?: "SEÇÃO DESCONHECIDA",
                                 transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
-                                label = "upcoming_marker"
-                            ) { (marker, finished) ->
-                                if (marker != null && !finished) {
-                                    val upcomingType = when (marker.type) {
-                                        ScoreMarkerType.DA_CAPO -> "D.C."
-                                        ScoreMarkerType.DAL_SEGNO -> "D.S."
-                                        ScoreMarkerType.TO_CODA -> "To Coda"
-                                        ScoreMarkerType.FINE, ScoreMarkerType.AL_FINE -> "Fine"
-                                        ScoreMarkerType.SEGNO -> "Segno"
-                                        ScoreMarkerType.CODA -> "Coda"
-                                        else -> "Salto"
+                                label = "section_name"
+                            ) { name ->
+                                Text(
+                                    text = name.uppercase(),
+                                    style = if (hudState == HudState.MINIMAL) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            AnimatedVisibility(visible = hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) {
+                                if (nextSection != null) {
+                                    Text(
+                                        text = "↓ Próximo: ${nextSection.name.uppercase()}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        // Center side: Context Message
+                        AnimatedVisibility(
+                            visible = (hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) && readingContext.message != null,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            AnimatedContent(
+                                targetState = readingContext,
+                                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                                label = "context_message"
+                            ) { context ->
+                                val textColor = when(context.urgency) {
+                                    com.example.util.ContextUrgency.LOW -> theme.accentColor
+                                    com.example.util.ContextUrgency.MEDIUM -> Color(0xFFFFBF00)
+                                    com.example.util.ContextUrgency.HIGH -> theme.cueColor
+                                }
+                                Text(
+                                    text = context.message ?: "",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textColor,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        // Right side: Pass & Upcoming relationships
+                        Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
+                            AnimatedContent(
+                                targetState = musicalTimeline.currentPass,
+                                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                                label = "pass_name"
+                            ) { pass ->
+                                val passName = when(pass) {
+                                    MusicalPass.FIRST_PASS -> "1ª Passagem"
+                                    MusicalPass.SECOND_PASS -> "2ª Passagem"
+                                    MusicalPass.THIRD_PASS -> "3ª Passagem"
+                                    MusicalPass.FINAL_PASS -> "Última Passagem"
+                                }
+                                Text(
+                                    text = passName,
+                                    style = if (hudState == HudState.MINIMAL) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            AnimatedVisibility(visible = hudState == HudState.EXPANDED || hudState == HudState.PERFORMANCE) {
+                                AnimatedContent(
+                                    targetState = Pair(upcomingMarker, musicalTimeline.timelineFinished),
+                                    transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                                    label = "upcoming_marker"
+                                ) { (marker, finished) ->
+                                    if (marker != null && !finished) {
+                                        val upcomingType = when (marker.type) {
+                                            ScoreMarkerType.DA_CAPO -> "D.C."
+                                            ScoreMarkerType.DAL_SEGNO -> "D.S."
+                                            ScoreMarkerType.TO_CODA -> "To Coda"
+                                            ScoreMarkerType.FINE, ScoreMarkerType.AL_FINE -> "Fine"
+                                            ScoreMarkerType.SEGNO -> "Segno"
+                                            ScoreMarkerType.CODA -> "Coda"
+                                            else -> "Salto"
+                                        }
+                                        Text(
+                                            text = "↓ $upcomingType",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = theme.cueColor
+                                        )
+                                    } else if (finished) {
+                                        Text(
+                                            text = "Fim",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = theme.accentColor
+                                        )
+                                    } else {
+                                        Spacer(modifier = Modifier.height(16.dp)) // Maintain layout height if empty
                                     }
-                                    Text(
-                                        text = "↓ $upcomingType",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                } else if (finished) {
-                                    Text(
-                                        text = "Fim",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                } else {
-                                    Spacer(modifier = Modifier.height(16.dp)) // Maintain layout height if empty
                                 }
                             }
                         }
                     }
-                }
 
-                // Progress Bar
-                Spacer(modifier = Modifier.height(if (hudState == HudState.MINIMAL) 4.dp else 8.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(if (hudState == HudState.MINIMAL) 1.dp else 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    val sections = musicalStructure.sections
-                    if (sections.isEmpty()) {
-                        val progress = if (pageCount > 0) ((currentPage + 1).toFloat() / pageCount.toFloat()) else 0f
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxSize(),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
-                        )
-                    } else {
-                        sections.forEach { section ->
-                            val isCurrent = currentPage in section.startPage..section.endPage
-                            val isPast = currentPage > section.endPage
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .background(
-                                        color = if (isCurrent) MaterialTheme.colorScheme.primary 
-                                                else if (isPast) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(50)
-                                    )
+                    // Progress Bar
+                    val minimalTimelineAlpha = when (minimalState?.timeline) {
+                        com.example.ui.theme.MinimalVisibility.HIDDEN -> 0f
+                        com.example.ui.theme.MinimalVisibility.REDUCED -> 0.3f
+                        else -> 1f
+                    }
+                    val timelineAlpha by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = minimalTimelineAlpha,
+                        label = "timelineAlpha"
+                    )
+                    
+                    Spacer(modifier = Modifier.height(if (hudState == HudState.MINIMAL) 4.dp else 8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(if (hudState == HudState.MINIMAL) 1.dp else 3.dp).graphicsLayer(alpha = timelineAlpha),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        val sections = musicalStructure.sections
+                        if (sections.isEmpty()) {
+                            val progress = if (pageCount > 0) ((currentPage + 1).toFloat() / pageCount.toFloat()) else 0f
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxSize(),
+                                color = theme.progressColor,
+                                trackColor = theme.badgeColor
                             )
+                        } else {
+                            sections.forEach { section ->
+                                val isCurrent = currentPage in section.startPage..section.endPage
+                                val isPast = currentPage > section.endPage
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(
+                                            color = if (isCurrent) theme.progressColor 
+                                                    else if (isPast) theme.progressColor.copy(alpha = 0.5f)
+                                                    else theme.badgeColor,
+                                            shape = RoundedCornerShape(50)
+                                        )
+                                )
+                            }
                         }
                     }
                 }

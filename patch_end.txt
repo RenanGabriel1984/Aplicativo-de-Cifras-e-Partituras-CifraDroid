@@ -1,0 +1,23 @@
+/hostState = snackbarHostState/a\
+        )\
+        androidx.compose.animation.AnimatedVisibility(\
+            visible = showPreparationWorkspace \&\& preparationState != null,\
+            enter = androidx.compose.animation.fadeIn(),\
+            exit = androidx.compose.animation.fadeOut(),\
+            modifier = Modifier.align(Alignment.Center).zIndex(100f)\
+        ) {\
+            Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {\
+                com.example.ui.preparation.PreparationWorkspaceScreen(\
+                    state = preparationState!!,\
+                    responsiveState = com.example.ui.theme.ResponsiveStageState(com.example.ui.theme.ResponsiveStage.COMPACT, 600, 800, false, false),\
+                    modifier = Modifier.fillMaxSize()\
+                )\
+                androidx.compose.material3.Button(\
+                    onClick = { showPreparationWorkspace = false },\
+                    modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp)\
+                ) {\
+                    Text("Fechar")\
+                }\
+            }\
+        }
+
